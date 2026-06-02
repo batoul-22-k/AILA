@@ -1,0 +1,724 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --role-bg: #f4f5f4;
+  --role-surface: #ffffff;
+  --role-primary: #2b7886;
+  --role-primary-strong: #245866;
+  --role-accent: #79d99c;
+  --role-secondary: #79d99c;
+  --role-info: #eaf8f0;
+  --role-error: #ef6b6b;
+  --role-soft: #eaf8f0;
+  --role-hover: #f8faf8;
+  --role-text: #101418;
+  --role-border: #e8ecea;
+  --role-glow: rgba(43, 120, 134, 0.14);
+  --role-radius: 28px;
+  --role-card-padding: 1.5rem;
+  --role-card-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+  --role-card-border: rgba(15, 23, 42, 0.06);
+  --role-pressed-shadow: none;
+  --role-motion: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --role-dark-soft: rgba(148, 163, 184, 0.16);
+  --role-dark-text: #cbd5e1;
+  --ink-black: #101418;
+  --prussian-blue: #245866;
+  --dusk-blue: #2b7886;
+  --dusty-denim: #e8ecea;
+  --alabaster-grey: #f4f5f4;
+  --color-bg: #f4f5f4;
+  --color-surface: #ffffff;
+  --color-soft-surface: #f8faf8;
+  --color-primary: #2b7886;
+  --color-accent: #79d99c;
+  --color-success: #79d99c;
+  --color-warning: #f4b860;
+  --color-error: #ef6b6b;
+  --color-text: #101418;
+  --color-muted: #6b7280;
+  --color-border: #e8ecea;
+  --font-ui: Aptos, "Segoe UI Variable", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-heading: "Aptos Display", Aptos, "Segoe UI Variable", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif;
+  --radius-card: 28px;
+  --shadow-card: 0 18px 45px rgba(15, 23, 42, 0.08);
+  --spacing-section: 2rem;
+  --spacing-card: 1.25rem;
+  color: #101418;
+  background: #f4f5f4;
+  font-family:
+    "Plus Jakarta Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+[data-theme="student"] {
+  --role-bg: #020613;
+  --role-surface: #ffffff;
+  --role-primary: #173d63;
+  --role-primary-strong: #020613;
+  --role-accent: #b487a4;
+  --role-secondary: #a2b7d6;
+  --role-info: #eaf1fa;
+  --role-error: #ef6b6b;
+  --role-soft: #eaf1fa;
+  --role-hover: #f3f6fb;
+  --role-text: #020613;
+  --role-border: rgba(162, 183, 214, 0.42);
+  --role-glow: rgba(180, 135, 164, 0.28);
+  --role-radius: 26px;
+  --role-card-padding: 1.25rem;
+  --role-card-shadow: 0 24px 60px rgba(2, 6, 19, 0.22);
+  --role-card-border: rgba(162, 183, 214, 0.28);
+  --role-pressed-shadow: inset 0 2px 8px rgba(2, 6, 19, 0.18);
+  --role-dark-soft: rgba(162, 183, 214, 0.18);
+  --role-dark-text: #eaf1fa;
+}
+
+[data-theme="staff"] {
+  --role-bg: #f4f5f4;
+  --role-surface: #ffffff;
+  --role-primary: #2b7886;
+  --role-primary-strong: #245866;
+  --role-accent: #79d99c;
+  --role-secondary: #79d99c;
+  --role-info: #eaf8f0;
+  --role-error: #ef6b6b;
+  --role-soft: #eaf8f0;
+  --role-hover: #f8faf8;
+  --role-text: #101418;
+  --role-border: #e8ecea;
+  --role-glow: rgba(43, 120, 134, 0.14);
+  --role-radius: 28px;
+  --role-card-padding: 1.5rem;
+  --role-card-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+  --role-card-border: rgba(15, 23, 42, 0.06);
+  --role-pressed-shadow: none;
+  --role-dark-soft: rgba(43, 120, 134, 0.16);
+  --role-dark-text: #f8faf8;
+}
+
+[data-role="admin"] {
+  --role-bg: #f4f5f4;
+  --role-surface: #ffffff;
+  --role-primary: #2b7886;
+  --role-primary-strong: #245866;
+  --role-accent: #79d99c;
+  --role-secondary: #79d99c;
+  --role-info: #eaf8f0;
+  --role-error: #ef6b6b;
+  --role-soft: #eaf8f0;
+  --role-hover: #f8faf8;
+  --role-text: #101418;
+  --role-border: #e8ecea;
+  --role-glow: rgba(43, 120, 134, 0.14);
+  --role-radius: 28px;
+  --role-card-padding: 1.5rem;
+  --role-card-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+  --role-card-border: rgba(15, 23, 42, 0.06);
+  --role-dark-soft: rgba(43, 120, 134, 0.16);
+  --role-dark-text: #f8faf8;
+}
+
+[data-role="instructor"] {
+  --role-bg: var(--color-bg);
+  --role-surface: var(--color-surface);
+  --role-primary: var(--color-primary);
+  --role-primary-strong: var(--color-primary);
+  --role-accent: var(--color-accent);
+  --role-secondary: var(--color-success);
+  --role-info: color-mix(in srgb, var(--color-accent) 18%, var(--color-surface));
+  --role-soft: color-mix(in srgb, var(--color-accent) 18%, var(--color-surface));
+  --role-hover: var(--color-soft-surface, #f8faf8);
+  --role-text: var(--color-text);
+  --role-border: var(--color-border);
+  --role-card-border: rgba(15, 23, 42, 0.06);
+  --role-card-padding: 1.5rem;
+  --role-card-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+  --role-glow: rgba(43, 120, 134, 0.14);
+  --role-radius: 28px;
+  font-family: var(--font-ui);
+}
+
+[data-instructor-theme="soft-mint-dashboard"] {
+  --color-bg: #f4f5f4;
+  --color-surface: #ffffff;
+  --color-soft-surface: #f8faf8;
+  --color-primary: #2b7886;
+  --color-accent: #79d99c;
+  --color-success: #79d99c;
+  --color-warning: #f4b860;
+  --color-error: #ef6b6b;
+  --color-text: #101418;
+  --color-muted: #6b7280;
+  --color-border: #e8ecea;
+  --shadow-card: 0 18px 45px rgba(15, 23, 42, 0.08);
+}
+
+[data-instructor-theme="academic-classic"] {
+  --ink-black: #0d1b2a;
+  --prussian-blue: #1b263b;
+  --dusk-blue: #415a77;
+  --dusty-denim: #778da9;
+  --alabaster-grey: #e0e1dd;
+  --color-bg: var(--alabaster-grey);
+  --color-surface: #f7f8f5;
+  --color-primary: var(--prussian-blue);
+  --color-accent: var(--dusk-blue);
+  --color-success: #3f6f58;
+  --color-text: var(--ink-black);
+  --color-border: color-mix(in srgb, var(--dusty-denim) 55%, var(--color-surface));
+  --color-muted: color-mix(in srgb, var(--dusk-blue) 82%, transparent);
+  --shadow-card: 0 14px 34px rgba(13, 27, 42, 0.08);
+}
+
+[data-instructor-theme="modern-slate"] {
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-primary: #334155;
+  --color-accent: #0369a1;
+  --color-success: #15803d;
+  --color-text: #1e293b;
+  --color-border: #e2e8f0;
+}
+
+[data-instructor-theme="teal-professional"] {
+  --color-bg: #f7f7f5;
+  --color-surface: #ffffff;
+  --color-primary: #0f766e;
+  --color-accent: #0ea5a4;
+  --color-success: #2e7d32;
+  --color-text: #243b3a;
+  --color-border: #dde5e3;
+}
+
+[data-instructor-theme="dark-academic"] {
+  --color-bg: #0f172a;
+  --color-surface: #1e293b;
+  --color-primary: #cbd5e1;
+  --color-accent: #d4a373;
+  --color-success: #84a98c;
+  --color-text: #f8fafc;
+  --color-border: #334155;
+  --color-muted: #cbd5e1;
+  --shadow-card: 0 18px 44px rgba(2, 6, 23, 0.26);
+}
+
+[data-density="comfortable"] {
+  --radius-card: 28px;
+  --spacing-section: 2rem;
+  --spacing-card: 1.5rem;
+}
+
+[data-density="compact"] {
+  --radius-card: 24px;
+  --spacing-section: 1.25rem;
+  --spacing-card: 1.25rem;
+}
+
+[data-density="focus"] {
+  --radius-card: 32px;
+  --spacing-section: 2rem;
+  --spacing-card: 1.75rem;
+}
+
+[data-motion="smooth"] {
+  --role-motion: all 0.25s ease-in-out;
+}
+
+[data-motion="minimal"] {
+  --role-motion: all 0.14s ease-in-out;
+}
+
+[data-motion="reduced"] *,
+[data-motion="reduced"] *::before,
+[data-motion="reduced"] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+  transition-duration: 0.001ms !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+[data-accessibility="high-contrast"] {
+  --color-border: color-mix(in srgb, var(--color-text) 34%, var(--color-bg));
+  --shadow-card: none;
+}
+
+[data-accessibility="readable"] {
+  font-size: 17px;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  overflow-x: hidden;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.focus-ring {
+  @apply focus:outline-none focus:ring-2 focus:ring-role-accent focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-slate-950;
+}
+
+.role-root {
+  background: var(--role-bg);
+  color: var(--role-text);
+}
+
+[data-role="student"].role-root {
+  background:
+    radial-gradient(circle at 18% 8%, rgba(162, 183, 214, 0.28), transparent 28rem),
+    radial-gradient(circle at 86% 18%, rgba(180, 135, 164, 0.26), transparent 30rem),
+    linear-gradient(145deg, #020613 0%, #173d63 48%, #020613 100%),
+    var(--role-bg);
+}
+
+[data-app-theme].role-root,
+[data-role="admin"].role-root,
+[data-role="instructor"].role-root {
+  background: var(--role-bg);
+}
+
+.role-shell,
+.role-topbar,
+.role-sidebar,
+.role-main,
+.adaptive-card,
+.adaptive-button,
+.adaptive-input,
+.adaptive-answer,
+.role-mobile-nav {
+  transition: var(--role-motion);
+}
+
+.role-main {
+  max-width: 88rem;
+}
+
+[data-role="student"] .role-main {
+  max-width: 72rem;
+}
+
+[data-role="admin"] .role-main {
+  max-width: 96rem;
+}
+
+.role-topbar {
+  border-color: transparent;
+  /*background: color-mix(in srgb, var(--role-bg) 84%, white 16%);*/
+}
+
+.role-brand-card,
+.role-drawer,
+.role-user-chip,
+.role-search {
+  border-color: var(--role-card-border);
+  border-radius: var(--role-radius);
+  background: color-mix(in srgb, var(--role-surface) 94%, transparent);
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.06);
+}
+
+.role-sidebar {
+  width: 18rem;
+}
+
+.role-sidebar > div {
+  border: 1px solid var(--role-card-border);
+  border-radius: 32px;
+  background: color-mix(in srgb, var(--role-surface) 86%, transparent);
+  box-shadow: var(--role-card-shadow);
+  padding: 0.85rem;
+}
+
+[data-role="student"] .role-sidebar {
+  width: 16.5rem;
+}
+
+[data-role="admin"] .role-sidebar {
+  width: 19rem;
+}
+
+.adaptive-card {
+  border-color: var(--role-card-border);
+  border-radius: var(--role-radius);
+  box-shadow: var(--role-card-shadow);
+  padding: var(--role-card-padding);
+}
+
+.adaptive-card:not([data-surface="custom"]) {
+  background: color-mix(in srgb, var(--role-surface) 96%, transparent);
+}
+
+[data-role="student"] .adaptive-card {
+  border-width: 1px;
+  backdrop-filter: none;
+}
+
+[data-role="instructor"] .adaptive-card {
+  backdrop-filter: none;
+}
+
+[data-app-theme] .adaptive-card,
+[data-role="instructor"] .adaptive-card {
+  background: color-mix(in srgb, var(--color-surface) 98%, transparent);
+  border-color: rgba(15, 23, 42, 0.06);
+  color: var(--color-text);
+}
+
+[data-app-theme] h1,
+[data-app-theme] h2,
+[data-app-theme] h3,
+[data-app-theme] .role-brand-card p:first-child,
+[data-app-theme] .role-user-chip p:first-child,
+[data-role="instructor"] h1,
+[data-role="instructor"] h2,
+[data-role="instructor"] h3,
+[data-role="instructor"] .role-brand-card p:first-child,
+[data-role="instructor"] .role-user-chip p:first-child {
+  color: var(--color-text);
+  font-family: var(--font-heading);
+  letter-spacing: 0;
+}
+
+[data-app-theme] h1,
+[data-app-theme] .text-3xl,
+[data-role="instructor"] h1,
+[data-role="instructor"] .text-3xl {
+  font-weight: 780;
+}
+
+[data-app-theme] h2,
+[data-app-theme] h3,
+[data-app-theme] .font-black,
+[data-role="instructor"] h2,
+[data-role="instructor"] h3,
+[data-role="instructor"] .font-black {
+  font-weight: 720;
+}
+
+[data-app-theme] p,
+[data-app-theme] label,
+[data-app-theme] input,
+[data-app-theme] textarea,
+[data-app-theme] select,
+[data-role="instructor"] p,
+[data-role="instructor"] label,
+[data-role="instructor"] input,
+[data-role="instructor"] textarea,
+[data-role="instructor"] select {
+  letter-spacing: 0;
+}
+
+[data-app-theme] .role-brand-card,
+[data-app-theme] .role-drawer,
+[data-app-theme] .role-user-chip,
+[data-app-theme] .role-search,
+[data-role="instructor"] .role-brand-card,
+[data-role="instructor"] .role-drawer,
+[data-role="instructor"] .role-user-chip,
+[data-role="instructor"] .role-search {
+  background: color-mix(in srgb, var(--color-surface) 96%, transparent);
+  border-color: rgba(15, 23, 42, 0.06);
+  color: var(--color-text);
+}
+
+[data-role="instructor"] .role-sidebar {
+  width: 17.5rem;
+}
+
+[data-role="instructor"][data-layout-style="collapsible-sidebar"] .role-sidebar {
+  width: 5.75rem;
+}
+
+[data-role="instructor"][data-layout-style="collapsible-sidebar"] .role-sidebar p,
+[data-role="instructor"][data-layout-style="collapsible-sidebar"] .role-sidebar .role-nav-label,
+[data-role="instructor"][data-layout-style="collapsible-sidebar"] .role-sidebar .mt-auto {
+  display: none;
+}
+
+[data-role="instructor"][data-layout-style="top-navigation"] .role-sidebar {
+  display: none;
+}
+
+[data-role="instructor"][data-density="compact"] .page-grid {
+  gap: 1rem;
+}
+
+[data-role="instructor"][data-density="focus"] .instructor-secondary,
+[data-role="instructor"][data-density="focus"] .instructor-optional {
+  display: none;
+}
+
+[data-role="admin"] .adaptive-card {
+  border-style: solid;
+  backdrop-filter: none;
+}
+
+.adaptive-card[data-interactive="true"]:hover {
+  border-color: var(--role-accent);
+  box-shadow: 0 22px 54px var(--role-glow);
+  transform: translateY(-1px);
+}
+
+[data-role="admin"] .adaptive-card[data-interactive="true"]:hover {
+  transform: none;
+}
+
+[data-role="instructor"] .adaptive-card[data-interactive="true"]:hover {
+  transform: translateY(-2px);
+}
+
+.adaptive-button {
+  min-height: 2.75rem;
+  border-radius: 999px;
+  transition: var(--role-motion);
+}
+
+[data-app-theme] .adaptive-button,
+[data-role="instructor"] .adaptive-button {
+  border-radius: 999px;
+  font-weight: 680;
+}
+
+[data-role="student"] .adaptive-button {
+  min-height: 3rem;
+  border-radius: 999px;
+  box-shadow: 0 16px 36px rgba(2, 6, 19, 0.18);
+}
+
+[data-app-theme][data-role="student"] .adaptive-button {
+  min-height: 2.75rem;
+  border-radius: 9px;
+  box-shadow: none;
+}
+
+.adaptive-button:active {
+  transform: translateY(2px);
+  box-shadow: var(--role-pressed-shadow);
+}
+
+.adaptive-input {
+  border-color: var(--role-border);
+  border-radius: 2rem;
+  background: var(--role-surface);
+  transition: var(--role-motion);
+}
+
+[data-app-theme] .adaptive-input,
+[data-role="instructor"] .adaptive-input {
+  background: color-mix(in srgb, var(--color-surface) 96%, white);
+  border-color: rgba(15, 23, 42, 0.08);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+}
+
+[data-role="student"] .adaptive-input {
+  min-height: 3rem;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 30px rgba(2, 6, 19, 0.18);
+}
+
+[data-app-theme][data-role="student"] .adaptive-input {
+  min-height: 2.75rem;
+  background: color-mix(in srgb, var(--color-surface) 96%, white);
+  box-shadow: none;
+}
+
+.adaptive-answer {
+  border-color: var(--role-border);
+  border-radius: 24px;
+  background: var(--role-hover);
+}
+
+.adaptive-answer:hover {
+  border-color: var(--role-accent);
+}
+
+[data-role="student"] .adaptive-answer {
+  min-height: 3.5rem;
+  border-color: rgba(162, 183, 214, 0.34);
+  box-shadow: var(--role-card-shadow);
+}
+
+[data-app-theme][data-role="student"] .adaptive-answer {
+  min-height: 3rem;
+  border-color: var(--role-border);
+  box-shadow: none;
+}
+
+[data-role="admin"] .page-grid {
+  gap: 1rem;
+}
+
+.role-mobile-nav {
+  display: none;
+}
+
+[data-role="student"] .role-mobile-nav {
+  display: block;
+}
+
+.page-grid {
+  @apply grid gap-4 sm:gap-5 lg:gap-6;
+  gap: var(--spacing-section);
+}
+
+[data-role="instructor"] .role-main,
+[data-role="admin"] .role-main {
+  padding-top: 1.5rem;
+}
+
+[data-role="instructor"] .role-topbar,
+[data-role="admin"] .role-topbar {
+  box-shadow: none;
+}
+
+[data-role="instructor"] .role-nav-label,
+[data-role="admin"] .role-nav-label {
+  letter-spacing: 0;
+}
+
+[data-role="instructor"] .role-sidebar nav a,
+[data-role="admin"] .role-sidebar nav a {
+  border-radius: 999px;
+}
+
+[data-role="instructor"] .text-slate-950,
+[data-role="instructor"] .text-slate-900,
+[data-role="instructor"] .text-slate-800,
+[data-role="admin"] .text-slate-950,
+[data-role="admin"] .text-slate-900,
+[data-role="admin"] .text-slate-800 {
+  color: var(--role-text);
+}
+
+[data-role="instructor"] .text-slate-700,
+[data-role="instructor"] .text-slate-600,
+[data-role="instructor"] .text-slate-500,
+[data-role="admin"] .text-slate-700,
+[data-role="admin"] .text-slate-600,
+[data-role="admin"] .text-slate-500 {
+  color: var(--color-muted);
+}
+
+[data-role="student"] .role-topbar {
+  border-color: rgba(162, 183, 214, 0.16);
+  background: rgba(2, 6, 19, 0.72);
+  color: white;
+}
+
+[data-role="student"] .role-topbar .text-slate-950,
+[data-role="student"] .role-topbar .text-slate-900,
+[data-role="student"] .role-topbar .text-slate-800,
+[data-role="student"] .role-user-chip .text-slate-950,
+[data-role="student"] .role-user-chip .text-slate-900,
+[data-role="student"] .role-brand-card .text-slate-950,
+[data-role="student"] .role-brand-card .text-slate-900 {
+  color: #eaf1fa;
+}
+
+[data-role="student"] .role-topbar .text-slate-500,
+[data-role="student"] .role-topbar .text-slate-400,
+[data-role="student"] .role-user-chip .text-slate-500,
+[data-role="student"] .role-user-chip .text-slate-400,
+[data-role="student"] .role-brand-card .text-slate-500,
+[data-role="student"] .role-brand-card .text-slate-400 {
+  color: #a2b7d6;
+}
+
+[data-role="student"] .role-brand-card,
+[data-role="student"] .role-sidebar > div,
+[data-role="student"] .role-user-chip,
+[data-role="student"] .role-search {
+  border-color: rgba(162, 183, 214, 0.18);
+  background: rgba(2, 6, 19, 0.48);
+  color: #eaf1fa;
+  box-shadow: 0 24px 70px rgba(2, 6, 19, 0.26);
+  backdrop-filter: blur(18px);
+}
+
+[data-role="student"] .adaptive-card:not([data-surface="custom"]) {
+  background: rgba(255, 255, 255, 0.94);
+  color: #020613;
+}
+
+[data-role="student"] .role-sidebar nav a:not([aria-current="page"]) {
+  color: #d7e2f0;
+}
+
+[data-role="student"] .page-grid > .flex:first-child h1 {
+  color: #ffffff;
+}
+
+[data-role="student"] .page-grid > .flex:first-child p:not(:first-child) {
+  color: #d7e2f0;
+}
+
+[data-role="student"] .role-mobile-nav > div {
+  border-color: rgba(162, 183, 214, 0.22);
+  background: rgba(2, 6, 19, 0.72);
+  box-shadow: 0 24px 70px rgba(2, 6, 19, 0.3);
+}
+
+[data-role="student"] .role-mobile-nav a:not([aria-current="page"]) {
+  color: #a2b7d6;
+}
+
+[data-role="student"] .role-mobile-nav a[aria-current="page"] {
+  background: rgba(162, 183, 214, 0.18);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(162, 183, 214, 0.34);
+}
+
+[data-role="student"] .student-settings .adaptive-card:not([data-surface="custom"]) {
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.subtle-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.4) transparent;
+}
+
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
