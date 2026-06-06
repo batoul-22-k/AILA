@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState } from "react";
 
-import { login as loginRequest, updateProfile as updateProfileRequest } from "../api/client";
+import { getCurrentSession, login as loginRequest, updateProfile as updateProfileRequest } from "../api/client";
 
 const AuthContext = createContext(null);
 
@@ -29,6 +29,12 @@ export function AuthProvider({ children }) {
       },
       async updateProfile(payload) {
         const nextAuth = await updateProfileRequest(payload);
+        window.localStorage.setItem("smartAuth", JSON.stringify(nextAuth));
+        setAuth(nextAuth);
+        return nextAuth;
+      },
+      async refreshSession() {
+        const nextAuth = await getCurrentSession();
         window.localStorage.setItem("smartAuth", JSON.stringify(nextAuth));
         setAuth(nextAuth);
         return nextAuth;

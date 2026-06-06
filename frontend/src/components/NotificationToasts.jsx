@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { listNotifications, markNotificationsRead } from "../api/client";
+import { listNotifications } from "../api/client";
 import { useAuth } from "../state/AuthContext";
 import { useToast } from "./ToastProvider";
 
@@ -18,12 +18,10 @@ export function NotificationToasts() {
         const notifications = await listNotifications();
         if (cancelled || notifications.length === 0) return;
 
-        const unreadIds = [];
         notifications
           .slice()
           .reverse()
           .forEach((notification) => {
-            unreadIds.push(notification.notification_id);
             if (shownIdsRef.current.has(notification.notification_id)) return;
             shownIdsRef.current.add(notification.notification_id);
             showToast({
@@ -33,8 +31,6 @@ export function NotificationToasts() {
               duration: 7000,
             });
           });
-
-        await markNotificationsRead(unreadIds);
       } catch {
         // Notification delivery should never interrupt the active workflow.
       }

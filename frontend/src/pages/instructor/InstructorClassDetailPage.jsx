@@ -80,7 +80,7 @@ export function InstructorClassDetailPage() {
       const updated = await updateClassStatus(classId, nextStatus);
       setClassDoc(updated);
       setSettings(toSettings(updated));
-      window.dispatchEvent(new Event("instructor-classes-changed"));
+      window.dispatchEvent(new window.Event("instructor-classes-changed"));
       showToast({
         title: nextStatus === "inactive" ? "Class deactivated" : "Class activated",
         description: nextStatus === "inactive" ? `${updated.name} is now inactive. Active sessions were stopped.` : `${updated.name} is active again.`,
@@ -100,7 +100,7 @@ export function InstructorClassDetailPage() {
     setUpdatingStatus(true);
     try {
       await deleteClass(classId);
-      window.dispatchEvent(new Event("instructor-classes-changed"));
+      window.dispatchEvent(new window.Event("instructor-classes-changed"));
       if (localStorage.getItem("instructorSelectedClassId") === classId) {
         localStorage.removeItem("instructorSelectedClassId");
         localStorage.removeItem("instructorSelectedClassName");

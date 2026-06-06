@@ -110,8 +110,22 @@ export function deleteClass(classId) {
   });
 }
 
-export function listUsers() {
-  return request("/api/users");
+export function listUsers(options = {}) {
+  const query = options.includeAll ? "?include_all=true" : "";
+  return request(`/api/users${query}`);
+}
+
+export function createUser(payload) {
+  return request("/api/users", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteUser(userId) {
+  return request(`/api/users/${userId}`, {
+    method: "DELETE",
+  });
 }
 
 export function listClassStudents(classId) {
@@ -304,6 +318,13 @@ export function updateInstructorSessionStatus(sessionId, status) {
   });
 }
 
+export function updateInstructorActiveQuestion(sessionId, questionId) {
+  return request(`/api/instructor/sessions/${sessionId}/active-question`, {
+    method: "PATCH",
+    body: JSON.stringify({ question_id: questionId }),
+  });
+}
+
 export function saveGeneratedQuestions(payload) {
   return request("/api/questions/generated", {
     method: "POST",
@@ -334,6 +355,10 @@ export function submitAnswer(payload) {
 
 export function getLiveSessionStats(sessionId) {
   return request(`/api/sessions/${sessionId}/stats`);
+}
+
+export function getLiveSessionQuestions(sessionId) {
+  return request(`/api/sessions/${sessionId}/questions`);
 }
 
 export function getInstructorDashboard() {

@@ -23,6 +23,10 @@ export function JoinSessionPage() {
     try {
       const session = await joinSession({ session_code: sessionCode, student_id: "current" });
       localStorage.setItem("activeSession", JSON.stringify(session));
+      if (session.active_question_id) {
+        localStorage.setItem(`activeQuestionId:${session.session_id}`, session.active_question_id);
+        localStorage.setItem("activeQuestionId", session.active_question_id);
+      }
       navigate("/student/active-question");
     } catch (err) {
       showToast({ title: "Could not join session", description: err instanceof Error ? err.message : "Could not join session", tone: "error" });

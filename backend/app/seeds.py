@@ -8,28 +8,28 @@ DEMO_USERS = [
         "name": "Maya Student",
         "email": "student@example.com",
         "password_hash_placeholder": "demo-password",
-        "global_role": "user",
+        "account_role": "student",
     },
     {
         "user_id": "instructor_001",
         "name": "Dr. Instructor",
         "email": "instructor@example.com",
         "password_hash_placeholder": "demo-password",
-        "global_role": "user",
+        "account_role": "instructor",
     },
     {
         "user_id": "admin_001",
         "name": "Admin Office",
         "email": "admin@example.com",
         "password_hash_placeholder": "demo-password",
-        "global_role": "admin",
+        "account_role": "admin",
     },
     {
         "user_id": "batoul_001",
         "name": "Batoul",
         "email": "batoul@example.com",
         "password_hash_placeholder": "demo-password",
-        "global_role": "user",
+        "account_role": "student",
     },
 ]
 

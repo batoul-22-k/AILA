@@ -116,14 +116,14 @@ function OptionSelector({ title, description, icon: Icon, options, descriptions,
 function StudentAppearancePage() {
   const comfortCards = [
     {
-      title: "Aurora classroom",
-      detail: "Navy surfaces keep live sessions focused while ice blue and mauve accents highlight what needs attention.",
-      swatches: ["#020613", "#173D63", "#5F688A", "#A2B7D6", "#B487A4"],
+      title: "AILA classroom",
+      detail: "Soft surfaces, readable cards, and teal accents keep live participation clear without visual noise.",
+      swatches: ["#F4F5F4", "#FFFFFF", "#EAF8F0", "#79D99C", "#2B7886"],
     },
     {
       title: "Readable cards",
       detail: "Learning content stays on bright cards with calm spacing, rounded corners, and clear answer targets.",
-      swatches: ["#FFFFFF", "#F3F6FB", "#EAF1FA", "#A2B7D6", "#173D63"],
+      swatches: ["#FFFFFF", "#F8FAF8", "#E8ECEA", "#79D99C", "#245866"],
     },
   ];
 
@@ -131,32 +131,32 @@ function StudentAppearancePage() {
     <div className="page-grid student-settings">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <p className="text-xs font-black uppercase tracking-wide text-[#A2B7D6]">Student settings</p>
-          <h1 className="mt-1 text-2xl font-black tracking-tight text-white sm:text-3xl">Appearance</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-[#D7E2F0]">
-            Your student workspace uses the dark aurora academic palette for live classes, progress, and quick answers.
+          <p className="text-xs font-black uppercase tracking-wide text-role-primary">Student settings</p>
+          <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950 dark:text-white sm:text-3xl">Appearance</h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500 dark:text-slate-400">
+            Your student workspace uses the same calm AILA theme as the rest of the system.
           </p>
         </div>
-        <Badge tone="violet">Aurora mode</Badge>
+        <Badge tone="role">AILA theme</Badge>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
-        <DashboardCard className="bg-[#173D63] text-white">
+        <DashboardCard>
           <div className="flex items-start justify-between gap-4">
             <div>
-              <Badge tone="slate" className="bg-white/12 text-[#EAF1FA]">Current palette</Badge>
-              <h2 className="mt-4 text-2xl font-black">Dark academic classroom</h2>
-              <p className="mt-2 text-sm leading-7 text-[#D7E2F0]">
-                The student UI stays separate from instructor dashboards: navy headers, ice blue highlights, and mauve accents for AI and question moments.
+              <Badge tone="role">Current palette</Badge>
+              <h2 className="mt-4 text-2xl font-black text-slate-950 dark:text-white">Clean classroom workspace</h2>
+              <p className="mt-2 text-sm leading-7 text-slate-500 dark:text-slate-400">
+                Student pages now share the same AILA structure: light cards, teal focus states, and compact navigation.
               </p>
             </div>
-            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-white/12 text-[#A2B7D6]">
+            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-role-soft text-role-primary">
               <Palette size={22} />
             </span>
           </div>
           <div className="mt-6 flex gap-2">
-            {["#020613", "#173D63", "#5F688A", "#A2B7D6", "#B487A4"].map((color) => (
-              <span key={color} className="h-10 flex-1 rounded-full border border-white/12" style={{ background: color }} />
+            {["#F4F5F4", "#FFFFFF", "#EAF8F0", "#79D99C", "#2B7886"].map((color) => (
+              <span key={color} className="h-10 flex-1 rounded-full border border-black/5" style={{ background: color }} />
             ))}
           </div>
         </DashboardCard>
@@ -166,7 +166,7 @@ function StudentAppearancePage() {
             <div>
               <h2 className="text-lg font-black text-slate-950">Display comfort</h2>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                Use the global light/dark control when you need browser-level contrast changes. Student classroom styling remains aurora-focused.
+                Use the global light/dark control when you need browser-level contrast changes. Student classroom styling stays aligned with AILA.
               </p>
             </div>
             <ThemeToggle />
@@ -176,9 +176,9 @@ function StudentAppearancePage() {
               <p className="text-sm font-black text-[#020613]">Focus first</p>
               <p className="mt-1 text-sm leading-6 text-[#5F688A]">Pages emphasize one classroom action at a time.</p>
             </div>
-            <div className="rounded-[24px] border border-[#E8D8E4] bg-[#FBF4F8] p-4">
+            <div className="rounded-[24px] border border-[#D7F0DF] bg-[#EAF8F0] p-4">
               <p className="text-sm font-black text-[#020613]">Question accents</p>
-              <p className="mt-1 text-sm leading-6 text-[#5F688A]">Mauve accents mark AI, answers, and feedback moments.</p>
+              <p className="mt-1 text-sm leading-6 text-[#5F688A]">Teal accents mark answers, status, and feedback moments.</p>
             </div>
           </div>
         </DashboardCard>

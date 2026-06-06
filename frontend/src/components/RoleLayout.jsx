@@ -25,7 +25,7 @@ export function RoleLayout({ role }) {
     "data-accessibility": appAppearance.accessibility,
     style: appAppearance.cssVars,
   };
-  const appearanceProps = role === "student" ? {} : staffAppearanceProps;
+  const appearanceProps = staffAppearanceProps;
 
   return (
     <AppLayout data-theme={themeScope} data-role={role} {...appearanceProps}>

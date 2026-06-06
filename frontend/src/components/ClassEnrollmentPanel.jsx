@@ -9,8 +9,7 @@ import { EmptyState } from "./EmptyState";
 import { useToast } from "./ToastProvider";
 
 function isStudentCandidate(user) {
-  const roles = user.roles || user.class_roles || user.workspaces?.map((workspace) => workspace.type) || [];
-  return user.global_role !== "admin" && !roles.includes("admin") && !roles.includes("instructor") && user.role !== "admin" && user.role !== "instructor";
+  return user.account_role === "student";
 }
 
 export function ClassEnrollmentPanel({ classDoc, tone = "role" }) {

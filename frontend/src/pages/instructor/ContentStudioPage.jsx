@@ -1,6 +1,8 @@
 import {
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Circle,
   Download,
   FileText,
@@ -35,6 +37,7 @@ import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { DashboardCard } from "../../components/DashboardCard";
 import { EmptyState } from "../../components/EmptyState";
+import { Modal } from "../../components/Modal";
 import { useToast } from "../../components/ToastProvider";
 import { useAuth } from "../../state/AuthContext";
 import { useCurrentWorkspace } from "../../state/WorkspaceContext";
@@ -109,60 +112,74 @@ function WorkflowHeader({
   classes,
   selectedClassId,
   onSelectClass,
-  stats,
   activeStage,
   primaryAction,
+  secondaryAction,
 }) {
+  const [classMenuOpen, setClassMenuOpen] = useState(false);
   const statusLabel = {
     upload: "Waiting for material",
-    analyze: "Analyzing lecture",
     generate: "Generating questions",
     review: "Needs instructor review",
     ready: "Classroom package ready",
   }[activeStage];
+  const showActions = activeStage !== "upload" && (primaryAction || secondaryAction);
 
   return (
     <section className="rounded-[32px] border border-[var(--role-card-border)] bg-white p-5 shadow-[var(--role-card-shadow)] dark:border-slate-800 dark:bg-slate-900 sm:p-6">
-      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_24rem] 2xl:items-start">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone="role">Content Studio</Badge>
             <Badge tone={activeStage === "ready" ? "green" : activeStage === "review" ? "gold" : "slate"}>{statusLabel}</Badge>
           </div>
-          <h1 className="mt-3 text-2xl font-black tracking-tight text-role-text dark:text-white sm:text-3xl">{className}</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--color-muted)] dark:text-slate-300">
-            Upload lecture material, watch the AI prepare assessment items, approve the final set, and launch a live classroom session from one workspace.
-          </p>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            {stats.map((stat) => (
-              <div key={stat.label} className="rounded-[20px] border border-[var(--role-card-border)] bg-[var(--role-hover)] px-4 py-3 dark:border-slate-800 dark:bg-slate-950">
-                <p className="text-[11px] font-black uppercase tracking-wide text-[var(--color-muted)] dark:text-slate-400">{stat.label}</p>
-                <p className="mt-1 text-sm font-black text-role-text dark:text-white">{stat.value}</p>
+          <div className="relative mt-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 className="min-w-0 truncate text-2xl font-black tracking-tight text-role-text dark:text-white sm:text-3xl">{className}</h1>
+              <button
+                type="button"
+                className="focus-ring grid h-9 w-9 shrink-0 place-items-center rounded-full border border-role-border bg-white text-role-primary transition hover:bg-role-hover dark:border-slate-700 dark:bg-slate-900"
+                aria-label="Change class"
+                title="Change class"
+                onClick={() => setClassMenuOpen((open) => !open)}
+              >
+                <Pencil size={16} />
+              </button>
+            </div>
+            {classMenuOpen && (
+              <div className="absolute left-0 top-full z-20 mt-3 w-full max-w-md rounded-[24px] border border-role-border bg-white p-2 shadow-lift dark:border-slate-800 dark:bg-slate-900">
+                {classes.length === 0 && <p className="px-3 py-2 text-sm font-semibold text-[var(--color-muted)]">No classes available.</p>}
+                {classes.map((classDoc) => {
+                  const active = selectedClassId === classDoc.class_id;
+                  return (
+                    <button
+                      key={classDoc.class_id}
+                      type="button"
+                      className={cn(
+                        "flex min-h-11 w-full items-center justify-between gap-3 rounded-[18px] px-3 py-2 text-left text-sm font-black transition",
+                        active ? "bg-role-hover text-role-primary" : "text-role-text hover:bg-role-hover dark:text-slate-200",
+                      )}
+                      onClick={() => {
+                        onSelectClass(classDoc.class_id);
+                        setClassMenuOpen(false);
+                      }}
+                    >
+                      <span className="truncate">{classDoc.name}</span>
+                      {active && <CheckCircle2 size={16} />}
+                    </button>
+                  );
+                })}
               </div>
-            ))}
+            )}
           </div>
         </div>
 
-        <div className="grid min-w-0 gap-3">
-          <select
-            className="adaptive-input focus-ring h-11 w-full border border-role-border px-4 text-sm font-bold"
-            value={selectedClassId}
-            onChange={(event) => onSelectClass(event.target.value)}
-          >
-            <option value="">Choose class</option>
-            {classes.map((classDoc) => (
-              <option key={classDoc.class_id} value={classDoc.class_id}>
-                {classDoc.name}
-              </option>
-            ))}
-          </select>
-          <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-1">
+        {showActions && (
+          <div className="flex w-full shrink-0 flex-col gap-2 sm:flex-row lg:w-auto">
+            {secondaryAction}
             {primaryAction}
-            <Link className="inline-flex h-11 items-center justify-center rounded-full border border-role-border bg-white px-4 text-sm font-black text-role-text hover:bg-role-hover dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800" to="/instructor/classes">
-              Manage Classes
-            </Link>
           </div>
-        </div>
+        )}
       </div>
     </section>
   );
@@ -206,7 +223,7 @@ function UploadLectureStep({
           </span>
           <h2 className="mt-4 text-xl font-black text-role-text dark:text-white">Upload lecture material</h2>
           <p className="mt-2 text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">
-            Drop a PPTX or PDF. Choosing a file uploads, analyzes, generates, and opens review automatically.
+            Drop a PPTX or PDF, then confirm to start question generation.
           </p>
           <div className="mt-5">
             <UploadActionButton label="Choose file" loading={isUploading} disabled={isUploading} onFile={handleFile} />
@@ -237,13 +254,22 @@ function buildGenerationPlan(settings) {
   const autoMcqLevels = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"];
   const autoShortLevels = ["Analyze", "Evaluate", "Create", "Understand", "Apply", "Remember"];
   const preferredLevel = settings.bloom_preference && settings.bloom_preference !== "auto" ? settings.bloom_preference : null;
+  const storedPlanByType = new Map();
+  (Array.isArray(settings.bloom_plan) ? settings.bloom_plan : []).forEach((item) => {
+    if (!item?.type || !bloomOptions.includes(item.level)) return;
+    const items = storedPlanByType.get(item.type) || [];
+    items.push(item.level);
+    storedPlanByType.set(item.type, items);
+  });
   const plan = [];
 
   for (let index = 0; index < mcqCount; index += 1) {
-    plan.push({ type: "mcq", level: preferredLevel || autoMcqLevels[index % autoMcqLevels.length] });
+    const storedLevel = storedPlanByType.get("mcq")?.[index];
+    plan.push({ type: "mcq", level: storedLevel || preferredLevel || autoMcqLevels[index % autoMcqLevels.length] });
   }
   for (let index = 0; index < shortAnswerCount; index += 1) {
-    plan.push({ type: "short_answer", level: preferredLevel || autoShortLevels[index % autoShortLevels.length] });
+    const storedLevel = storedPlanByType.get("short_answer")?.[index];
+    plan.push({ type: "short_answer", level: storedLevel || preferredLevel || autoShortLevels[index % autoShortLevels.length] });
   }
   return plan;
 }
@@ -305,7 +331,7 @@ function GenerationSettingsPanel({ generationSettings, setGenerationSettings, di
       <div>
         <p className="text-xs font-black uppercase tracking-wide text-role-primary">Generation settings</p>
         <h2 className="mt-1 text-lg font-black text-role-text dark:text-white">Question mix</h2>
-        <p className="mt-1 text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">Set this before upload. The file starts generation immediately.</p>
+        <p className="mt-1 text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">Set this before choosing a file. You will confirm before generation starts.</p>
       </div>
 
       <div className="mt-4 grid gap-3">
@@ -339,38 +365,61 @@ function GenerationSettingsPanel({ generationSettings, setGenerationSettings, di
           ]}
           onChange={(value) => setGenerationSettings({ ...generationSettings, difficulty: value })}
         />
-
-        <div className="grid gap-2">
-          <label className="grid gap-1.5 text-xs font-black uppercase tracking-wide text-[var(--color-muted)] dark:text-slate-400">
-            Language
-            <select
-              className="adaptive-input focus-ring h-11 border border-role-border px-4 text-sm font-bold"
-              disabled={disabled}
-              value={generationSettings.output_language}
-              onChange={(event) => setGenerationSettings({ ...generationSettings, output_language: event.target.value })}
-            >
-              <option value="en">English</option>
-              <option value="ar">Arabic</option>
-              <option value="mixed">Mixed</option>
-            </select>
-          </label>
-          <label className="grid gap-1.5 text-xs font-black uppercase tracking-wide text-[var(--color-muted)] dark:text-slate-400">
-            Bloom focus
-            <select
-              className="adaptive-input focus-ring h-11 border border-role-border px-4 text-sm font-bold"
-              disabled={disabled}
-              value={generationSettings.bloom_preference || "auto"}
-              onChange={(event) => setGenerationSettings({ ...generationSettings, bloom_preference: event.target.value })}
-            >
-              <option value="auto">Auto balanced</option>
-              {bloomOptions.map((level) => (
-                <option key={level} value={level}>{level}</option>
-              ))}
-            </select>
-          </label>
-        </div>
       </div>
     </DashboardCard>
+  );
+}
+
+function GenerationPlanEditor({ plan, disabled, onLevelChange }) {
+  if (plan.length === 0) {
+    return (
+      <div className="rounded-[20px] border border-role-border bg-white p-3 text-sm font-semibold text-[var(--color-muted)] dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+        Add at least one question before starting generation.
+      </div>
+    );
+  }
+
+  const typeCounts = {};
+
+  return (
+    <div className="grid gap-2">
+      <div>
+        <p className="text-xs font-black uppercase tracking-wide text-role-primary">Question Bloom focus</p>
+        <p className="mt-1 text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">
+          Pick the cognitive level for each generated question.
+        </p>
+      </div>
+      <div className="grid max-h-72 gap-2 overflow-y-auto pr-1">
+        {plan.map((item, index) => {
+          typeCounts[item.type] = (typeCounts[item.type] || 0) + 1;
+          const label = `${questionTypeLabel(item.type)} ${typeCounts[item.type]}`;
+
+          return (
+            <label
+              key={`${item.type}-${index}`}
+              className="grid gap-2 rounded-[18px] border border-role-border bg-white p-3 dark:border-slate-800 dark:bg-slate-900 sm:grid-cols-[minmax(0,1fr)_12rem] sm:items-center"
+            >
+              <span>
+                <span className="block text-sm font-black text-role-text dark:text-white">{label}</span>
+                {/* <span className="mt-0.5 block text-xs font-semibold text-[var(--color-muted)] dark:text-slate-400">
+                  Question {index + 1} of {plan.length}
+                </span> */}
+              </span>
+              <select
+                className="adaptive-input focus-ring h-11 border border-role-border px-4 text-sm font-bold"
+                disabled={disabled}
+                value={item.level}
+                onChange={(event) => onLevelChange(index, event.target.value)}
+              >
+                {bloomOptions.map((level) => (
+                  <option key={level} value={level}>{level}</option>
+                ))}
+              </select>
+            </label>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -388,6 +437,19 @@ function getQuestionReviewStatus(question, savedQuestions) {
   return "pending";
 }
 
+function getRegeneratedQuestion(originalQuestion, response) {
+  const nextQuestion = Array.isArray(response) ? response[0] : response?.question || response;
+  if (!nextQuestion) return originalQuestion;
+  return {
+    ...originalQuestion,
+    ...nextQuestion,
+    question_id: nextQuestion.question_id || originalQuestion.question_id,
+    upload_id: nextQuestion.upload_id || originalQuestion.upload_id,
+    type: nextQuestion.type || originalQuestion.type,
+    status: "generated",
+  };
+}
+
 function getQuestionConfidence(question, index) {
   const rawScore = question.confidence_score ?? question.confidence ?? question.ai_confidence;
   if (typeof rawScore === "number") return rawScore <= 1 ? Math.round(rawScore * 100) : Math.round(rawScore);
@@ -401,6 +463,8 @@ function QuestionReviewCard({
   status,
   editing,
   busy,
+  approving,
+  regenerating,
   onPatch,
   onApprove,
   onEdit,
@@ -413,7 +477,7 @@ function QuestionReviewCard({
   const statusTone = status === "approved" ? "green" : status === "needs edit" ? "gold" : "slate";
 
   return (
-    <DashboardCard className="border-[var(--role-card-border)] bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+    <article className="grid gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={statusTone}>{status}</Badge>
@@ -427,7 +491,7 @@ function QuestionReviewCard({
         </div>
       </div>
 
-      <div className="mt-5">
+      <div>
         {editing ? (
           <label className="grid gap-2 text-sm font-black text-role-text dark:text-slate-200">
             Question text
@@ -495,8 +559,8 @@ function QuestionReviewCard({
         </label>
       </div>
 
-      <div className="mt-5 flex flex-col gap-2 sm:flex-row">
-        <Button type="button" variant="success" onClick={() => onApprove(question)} loading={busy} disabled={busy || status === "approved"}>
+      <div className="flex flex-col gap-2 border-t border-role-border pt-5 dark:border-slate-800 sm:flex-row">
+        <Button type="button" variant="success" onClick={() => onApprove(question)} loading={approving} disabled={busy || status === "approved"}>
           <Check size={17} />
           {status === "approved" ? "Approved" : "Approve"}
         </Button>
@@ -504,12 +568,12 @@ function QuestionReviewCard({
           <Pencil size={17} />
           {editing ? "Done editing" : "Edit"}
         </Button>
-        <Button type="button" variant="outline" onClick={() => onRegenerate(question, index)} loading={busy}>
+        <Button type="button" variant="outline" onClick={() => onRegenerate(question, index)} loading={regenerating} disabled={busy}>
           <RefreshCw size={17} />
           Regenerate
         </Button>
       </div>
-    </DashboardCard>
+    </article>
   );
 }
 
@@ -537,10 +601,10 @@ function getProcessingState({ upload, selectedFile, extractedText, generatedQues
   if (isExtracting) {
     return {
       tone: "running",
-      title: "Extracting lecture text",
-      description: upload?.filename || selectedFile?.name || "Reading your slides and notes.",
+      title: "Preparing question generation",
+      description: upload?.filename || selectedFile?.name || "Preparing your lecture material for question generation.",
       progress: 35,
-      icon: FileText,
+      icon: Sparkles,
     };
   }
   if (isGenerating || isThinking) {
@@ -564,10 +628,10 @@ function getProcessingState({ upload, selectedFile, extractedText, generatedQues
   if (extractedText) {
     return {
       tone: "running",
-      title: "Lecture analyzed",
-      description: `${extractedText.length.toLocaleString()} characters extracted. Preparing generation.`,
+      title: "Preparing question generation",
+      description: "Your lecture material is ready. Question generation is starting.",
       progress: 50,
-      icon: FileText,
+      icon: Sparkles,
     };
   }
   return {
@@ -579,7 +643,7 @@ function getProcessingState({ upload, selectedFile, extractedText, generatedQues
   };
 }
 
-function AIProcessingCard({ state, upload, selectedFile, extractedText, generatedQuestions }) {
+function AIProcessingCard({ state, upload, selectedFile, generatedQuestions }) {
   const Icon = state.icon;
   const toneClass = {
     idle: "bg-slate-50 text-slate-600 border-slate-200",
@@ -608,31 +672,33 @@ function AIProcessingCard({ state, upload, selectedFile, extractedText, generate
           </div>
         </div>
 
-        <div className="grid gap-2 rounded-[24px] border border-role-border bg-role-hover p-4 dark:border-slate-800 dark:bg-slate-950">
+        {/* <div className="grid gap-2 rounded-[24px] border border-role-border bg-role-hover p-4 dark:border-slate-800 dark:bg-slate-950">
           <div>
             <p className="text-[11px] font-black uppercase tracking-wide text-[var(--color-muted)] dark:text-slate-400">File</p>
             <p className="mt-1 truncate text-sm font-black text-role-text dark:text-white">{fileName}</p>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-[18px] bg-white p-3 dark:bg-slate-900">
-              <p className="text-[11px] font-black uppercase tracking-wide text-[var(--color-muted)]">Text</p>
-              <p className="mt-1 text-sm font-black text-role-text dark:text-white">{extractedText ? extractedText.length.toLocaleString() : "0"}</p>
-            </div>
+          <div className="grid gap-2">
             <div className="rounded-[18px] bg-white p-3 dark:bg-slate-900">
               <p className="text-[11px] font-black uppercase tracking-wide text-[var(--color-muted)]">Questions</p>
               <p className="mt-1 text-sm font-black text-role-text dark:text-white">{generatedQuestions.length}</p>
             </div>
           </div>
-        </div>
+        </div> */}
       </div>
     </DashboardCard>
   );
 }
 
-function QuestionReviewFeed({ questions, savedQuestions, editingQuestionId, busy, onPatch, onApprove, onApproveAll, onEdit, onCancelEdit, onRegenerate }) {
+function QuestionReviewFeed({ questions, savedQuestions, editingQuestionId, busy, approving, regeneratingQuestionIndex, onPatch, onApprove, onDoneReview, onEdit, onCancelEdit, onRegenerate }) {
+  const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
+
+  useEffect(() => {
+    if (activeQuestionIndex >= questions.length) setActiveQuestionIndex(Math.max(questions.length - 1, 0));
+  }, [activeQuestionIndex, questions.length]);
+
   if (questions.length === 0) {
     return (
-    <DashboardCard className="grid min-h-72 place-items-center bg-white text-center">
+      <DashboardCard className="grid min-h-72 place-items-center bg-white text-center">
         <div className="max-w-md">
           <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-role-soft text-role-primary">
             <Sparkles size={26} />
@@ -645,41 +711,142 @@ function QuestionReviewFeed({ questions, savedQuestions, editingQuestionId, busy
   }
 
   const pendingCount = questions.filter((question) => getQuestionReviewStatus(question, savedQuestions) !== "approved").length;
+  const activeIndex = Math.min(activeQuestionIndex, questions.length - 1);
+  const activeQuestion = questions[activeIndex];
+  const activeStatus = getQuestionReviewStatus(activeQuestion, savedQuestions);
+  const canGoPrevious = activeIndex > 0;
+  const canGoNext = activeIndex < questions.length - 1;
+
+  function moveToQuestion(nextIndex) {
+    if (nextIndex < 0 || nextIndex >= questions.length) return;
+    onCancelEdit();
+    setActiveQuestionIndex(nextIndex);
+  }
+
+  async function handleApproveAndContinue(question) {
+    await onApprove(question);
+
+    const pendingIndexes = questions
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => getQuestionReviewStatus(item, savedQuestions) !== "approved" && item.question_id !== question.question_id)
+      .map(({ index }) => index);
+    const nextPendingIndex = pendingIndexes.find((index) => index > activeIndex) ?? pendingIndexes[0];
+    if (nextPendingIndex !== undefined) {
+      setActiveQuestionIndex(nextPendingIndex);
+      return;
+    }
+
+    if (activeIndex < questions.length - 1) setActiveQuestionIndex(activeIndex + 1);
+  }
 
   return (
-    <div className="grid gap-4">
-      <DashboardCard className="bg-white">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-xs font-black uppercase tracking-wide text-role-primary">Instructor review</p>
-            <h2 className="mt-1 text-xl font-black text-role-text dark:text-white">Generated question feed</h2>
-            <p className="mt-1 text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">
-              {pendingCount} questions still need approval before the classroom package is ready.
-            </p>
-          </div>
-          <Button type="button" variant="success" onClick={onApproveAll} loading={busy} disabled={busy || pendingCount === 0}>
-            <CheckCircle2 size={17} />
-            Approve all
-          </Button>
+    <section className="mx-auto w-full max-w-6xl rounded-[32px] border border-[var(--role-card-border)] bg-white p-5 shadow-[var(--role-card-shadow)] dark:border-slate-800 dark:bg-slate-900 sm:p-6">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+        <div className="min-w-0">
+          <p className="text-xs font-black uppercase tracking-wide text-role-primary">Instructor review</p>
+          <h2 className="mt-1 text-xl font-black text-role-text dark:text-white">Review one question at a time</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">
+            {pendingCount === 0 ? "All questions are approved. Finish review to hide the question previews." : `${pendingCount} questions still need approval. Approving moves you to the next question.`}
+          </p>
         </div>
-      </DashboardCard>
-      {questions.map((question, index) => (
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center lg:justify-end">
+          {pendingCount === 0 ? (
+            <Button type="button" variant="success" onClick={onDoneReview} disabled={busy}>
+              <CheckCircle2 size={17} />
+              Done
+            </Button>
+          ) : (
+            <div className="flex items-center justify-between gap-3 rounded-full border border-role-border bg-role-hover p-1 dark:border-slate-800 dark:bg-slate-950">
+              <button
+                type="button"
+                className="focus-ring grid h-10 w-10 place-items-center rounded-full bg-white text-role-text shadow-sm transition hover:bg-role-hover disabled:opacity-40 dark:bg-slate-900 dark:text-slate-200"
+                onClick={() => moveToQuestion(activeIndex - 1)}
+                disabled={busy || !canGoPrevious}
+                aria-label="Previous question"
+                title="Previous question"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <span className="min-w-16 text-center text-sm font-black text-role-text dark:text-white">
+                {activeIndex + 1} / {questions.length}
+              </span>
+              <button
+                type="button"
+                className="focus-ring grid h-10 w-10 place-items-center rounded-full bg-white text-role-text shadow-sm transition hover:bg-role-hover disabled:opacity-40 dark:bg-slate-900 dark:text-slate-200"
+                onClick={() => moveToQuestion(activeIndex + 1)}
+                disabled={busy || !canGoNext}
+                aria-label="Next question"
+                title="Next question"
+              >
+                <ChevronRight size={18} />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-5 flex items-center gap-2">
+        <span className="text-xs font-black uppercase tracking-wide text-[var(--color-muted)] dark:text-slate-400">Progress</span>
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          {questions.map((question, index) => {
+            const status = getQuestionReviewStatus(question, savedQuestions);
+            return (
+              <button
+                key={getQuestionKey(question, index)}
+                type="button"
+                className={cn(
+                  "h-2.5 rounded-full transition-all",
+                  index === activeIndex ? "w-10 bg-role-primary" : status === "approved" ? "w-2.5 bg-emerald-500" : "w-2.5 bg-slate-300 dark:bg-slate-700",
+                )}
+                onClick={() => moveToQuestion(index)}
+                disabled={busy}
+                aria-label={`Go to question ${index + 1}`}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-4 rounded-[28px] border border-role-border bg-role-hover/40 p-4 dark:border-slate-800 dark:bg-slate-950/50 lg:grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] lg:items-center sm:p-5">
+        <button
+          type="button"
+          className="focus-ring hidden h-11 w-11 place-items-center rounded-full border border-role-border bg-white text-role-text shadow-sm transition hover:bg-role-hover disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 lg:grid"
+          onClick={() => moveToQuestion(activeIndex - 1)}
+          disabled={busy || !canGoPrevious}
+          aria-label="Previous question"
+          title="Previous question"
+        >
+          <ChevronLeft size={21} />
+        </button>
         <QuestionReviewCard
-          key={getQuestionKey(question, index)}
-          question={question}
-          index={index}
+          key={getQuestionKey(activeQuestion, activeIndex)}
+          question={activeQuestion}
+          index={activeIndex}
           total={questions.length}
-          status={getQuestionReviewStatus(question, savedQuestions)}
-          editing={editingQuestionId === question.question_id}
+          status={activeStatus}
+          editing={editingQuestionId === activeQuestion.question_id}
           busy={busy}
+          approving={approving}
+          regenerating={regeneratingQuestionIndex === activeIndex}
           onPatch={onPatch}
-          onApprove={onApprove}
+          onApprove={handleApproveAndContinue}
           onEdit={onEdit}
           onCancelEdit={onCancelEdit}
           onRegenerate={onRegenerate}
         />
-      ))}
-    </div>
+        <button
+          type="button"
+          className="focus-ring hidden h-11 w-11 place-items-center rounded-full border border-role-border bg-white text-role-text shadow-sm transition hover:bg-role-hover disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 lg:grid"
+          onClick={() => moveToQuestion(activeIndex + 1)}
+          disabled={busy || !canGoNext}
+          aria-label="Next question"
+          title="Next question"
+        >
+          <ChevronRight size={21} />
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -696,7 +863,7 @@ function getReadinessChecks({ generatedQuestions, savedQuestions, createdSession
   ];
 }
 
-function QuestionQueue({ questions, savedQuestions }) {
+/* function QuestionQueue({ questions, savedQuestions }) {
   const typeCounts = { mcq: 0, short_answer: 0 };
 
   return (
@@ -728,7 +895,7 @@ function QuestionQueue({ questions, savedQuestions }) {
       </div>
     </DashboardCard>
   );
-}
+} */
 
 function ClassroomReadinessCard({ generatedQuestions, savedQuestions, createdSession }) {
   const checks = getReadinessChecks({ generatedQuestions, savedQuestions, createdSession });
@@ -757,12 +924,11 @@ function ClassroomReadinessCard({ generatedQuestions, savedQuestions, createdSes
   );
 }
 
-function StudioSidePanel({ questions, savedQuestions, createdSession, aiPanel }) {
+function StudioSidePanel({ questions, savedQuestions, createdSession }) {
   return (
     <aside className="grid content-start gap-4 md:grid-cols-2 2xl:sticky 2xl:top-24 2xl:grid-cols-1">
-      <QuestionQueue questions={questions} savedQuestions={savedQuestions} />
-      <ClassroomReadinessCard generatedQuestions={questions} savedQuestions={savedQuestions} createdSession={createdSession} />
-      <div className="md:col-span-2 2xl:col-span-1">{aiPanel}</div>
+      {/* <QuestionQueue questions={questions} savedQuestions={savedQuestions} /> */}
+      {/*  <ClassroomReadinessCard generatedQuestions={questions} savedQuestions={savedQuestions} createdSession={createdSession} /> */}
     </aside>
   );
 }
@@ -780,37 +946,45 @@ export function WorkflowActionBar({
   onCreateSession,
 }) {
   return (
-    <DashboardCard>
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h2 className="text-lg font-black text-slate-950 dark:text-white">Saved classroom output</h2>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{approvedCount} saved questions are ready for slides or a live session.</p>
+    <DashboardCard className="overflow-hidden bg-white p-0 dark:bg-slate-900">
+      <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="p-6 sm:p-7">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone="green">Review complete</Badge>
+            <Badge tone="slate">{approvedCount} approved</Badge>
+          </div>
+          <h2 className="mt-4 text-2xl font-black tracking-tight text-role-text dark:text-white">Classroom package is ready</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">
+            Your approved questions are saved. Download the updated slides now, then create a live session when you are ready to teach.
+          </p>
+
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Button type="button" variant="role" loading={isReconstructing} onClick={onDownloadPptx} disabled={!canDownload}>
-            <Download size={17} />
-            Download Updated PPTX
-          </Button>
-          <Button type="button" variant="success" loading={isCreatingSession} onClick={onCreateSession} disabled={!canCreateSession}>
-            <Radio size={17} />
-            Create Live Session
-          </Button>
+
+        <div className="border-t border-role-border bg-role-hover p-5 dark:border-slate-800 dark:bg-slate-950 xl:border-l xl:border-t-0">
+          <div className="grid h-full content-center gap-3">
+            <Button type="button" variant="role" loading={isReconstructing} onClick={onDownloadPptx} disabled={!canDownload}>
+              <Download size={17} />
+              Download Updated PPTX
+            </Button>
+            {presentation && (
+              <button className="rounded-[20px] border border-role-border bg-white p-3 text-left text-sm font-black text-role-primary transition hover:bg-role-soft dark:border-slate-800 dark:bg-slate-900" type="button" onClick={() => onDownloadReady(presentation)}>
+                Download ready: {presentation.filename}
+              </button>
+            )}
+            {createdSession ? (
+              <Link className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-emerald-600 px-5 text-sm font-black text-white shadow-soft transition hover:bg-emerald-700" to={`/instructor/live/${createdSession.session_id}`}>
+                <Rocket size={17} />
+                Launch session {createdSession.session_code}
+              </Link>
+            ) : (
+              <Button type="button" variant="success" loading={isCreatingSession} onClick={onCreateSession} disabled={!canCreateSession}>
+                <Radio size={17} />
+                Create Live Session
+              </Button>
+            )}
+          </div>
         </div>
       </div>
-      {(presentation || createdSession) && (
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {presentation && (
-            <button className="rounded-[24px] bg-role-hover p-4 text-left text-sm font-black text-role-primary" type="button" onClick={() => onDownloadReady(presentation)}>
-              Download ready: {presentation.filename}
-            </button>
-          )}
-          {createdSession && (
-            <Link className="rounded-[24px] bg-emerald-50 p-4 text-sm font-black text-emerald-700" to={`/instructor/live/${createdSession.session_id}`}>
-              Live session ready: {createdSession.session_code}
-            </Link>
-          )}
-        </div>
-      )}
     </DashboardCard>
   );
 }
@@ -854,38 +1028,6 @@ export function WorkflowActionBar({
   );
 }
  */
-function AiServicePanel({ status, checking, starting, onRefresh, onStart }) {
-  const running = Boolean(status?.running);
-  const modelReady = Boolean(status?.model_available);
-
-  return (
-    <DashboardCard>
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge tone={running && modelReady ? "green" : running ? "gold" : "red"}>
-              {running && modelReady ? "Engine Ready" : running ? "Model Missing" : "Engine Offline"}
-            </Badge>
-            {status?.model && <Badge tone="slate">{status.model}</Badge>}
-          </div>
-          <p className="mt-2 text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">
-            {checking ? "Checking Ollama..." : status?.message || "Check the local Ollama service before generating questions."}
-          </p>
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Button type="button" variant="outline" onClick={onRefresh} disabled={checking}>
-            <RefreshCw size={16} />
-            Check
-          </Button>
-          <Button type="button" variant="role" onClick={onStart} loading={starting} disabled={running && modelReady}>
-            <FileText size={16} />
-            Start engine
-          </Button>
-        </div>
-      </div>
-    </DashboardCard>
-  );
-}
 
 export function ContentStudioPage() {
   const { user } = useAuth();
@@ -897,6 +1039,8 @@ export function ContentStudioPage() {
   const classId = selectedClassId;
   const [currentStep, setCurrentStep] = useState("upload");
   const [selectedFile, setSelectedFile] = useState(null);
+  const [pendingGenerationFile, setPendingGenerationFile] = useState(null);
+  const [generationConfirmOpen, setGenerationConfirmOpen] = useState(false);
   const [uploadId, setUploadId] = useState(null);
   const [upload, setUpload] = useState(null);
   const [extractedText, setExtractedText] = useState("");
@@ -904,6 +1048,7 @@ export function ContentStudioPage() {
   const [savedQuestions, setSavedQuestions] = useState([]);
   const [generationPhase, setGenerationPhase] = useState("idle");
   const [isThinking, setIsThinking] = useState(false);
+  const [regeneratingQuestionIndex, setRegeneratingQuestionIndex] = useState(null);
   const [editingSavedQuestionId, setEditingSavedQuestionId] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -921,12 +1066,10 @@ export function ContentStudioPage() {
   const [error, setError] = useState("");
   const [presentation, setPresentation] = useState(null);
   const [createdSession, setCreatedSession] = useState(null);
-  const [aiStatus, setAiStatus] = useState(null);
-  const [isCheckingAi, setIsCheckingAi] = useState(false);
-  const [isStartingAi, setIsStartingAi] = useState(false);
 
   const approvedCount = savedQuestions.length;
   const approvedQuestionIds = useMemo(() => savedQuestions.map((question) => question.question_id).filter(Boolean), [savedQuestions]);
+  const pendingGenerationPlan = useMemo(() => buildGenerationPlan(generationSettings), [generationSettings]);
   function notifySuccess(title, description) {
     showToast({ title, description, tone: "success" });
   }
@@ -934,6 +1077,41 @@ export function ContentStudioPage() {
   function notifyError(err, fallback) {
     const description = err instanceof Error ? err.message : fallback;
     showToast({ title: "Action could not be completed", description, tone: "error" });
+  }
+
+  function notifyAiServiceStatus(status, { success = false } = {}) {
+    const running = Boolean(status?.running);
+    const modelReady = Boolean(status?.model_available);
+    const modelText = status?.model ? `Model: ${status.model}` : "";
+
+    if (running && modelReady) {
+      if (success) {
+        showToast({
+          title: "AI engine ready",
+          description: status?.message || modelText || "Question generation can start.",
+          tone: "success",
+          duration: 3200,
+        });
+      }
+      return;
+    }
+
+    if (running) {
+      showToast({
+        title: "AI model missing",
+        description: status?.model ? `Run: ollama pull ${status.model}` : status?.message || "Install the configured Ollama model before generating questions.",
+        tone: "warning",
+        duration: 7000,
+      });
+      return;
+    }
+
+    showToast({
+      title: "AI engine offline",
+      description: status?.message || "Ollama is not running. Content Studio will try to start it when generation begins.",
+      tone: "warning",
+      duration: 6000,
+    });
   }
 
   useEffect(() => {
@@ -958,11 +1136,10 @@ export function ContentStudioPage() {
     loadClasses();
   }, [instructorWorkspace?.class_id, selectedClassId]);
 
-  async function refreshAiStatus() {
-    setIsCheckingAi(true);
+  async function refreshAiStatus({ notify = false } = {}) {
     try {
       const status = await getAiStatus();
-      setAiStatus(status);
+      if (notify && (!status.running || !status.model_available)) notifyAiServiceStatus(status);
       return status;
     } catch (err) {
       const offline = {
@@ -970,33 +1147,29 @@ export function ContentStudioPage() {
         model_available: false,
         message: err instanceof Error ? err.message : "Could not check AI service",
       };
-      setAiStatus(offline);
+      if (notify) notifyAiServiceStatus(offline);
       return offline;
-    } finally {
-      setIsCheckingAi(false);
     }
   }
 
   async function handleStartAi() {
-    setIsStartingAi(true);
     setError("");
     try {
       const status = await startAiService();
-      setAiStatus(status);
       if (!status.model_available) {
-        notifyError(new Error(`Ollama is running, but model '${status.model}' is not available. Run: ollama pull ${status.model}`), "AI model is not available");
+        notifyAiServiceStatus(status);
+      } else {
+        notifyAiServiceStatus(status, { success: true });
       }
       return status;
     } catch (err) {
       notifyError(err, "Could not start AI service");
       return null;
-    } finally {
-      setIsStartingAi(false);
     }
   }
 
   useEffect(() => {
-    refreshAiStatus();
+    refreshAiStatus({ notify: true });
   }, []);
 
   useEffect(() => {
@@ -1045,7 +1218,7 @@ export function ContentStudioPage() {
         localStorage.setItem(studioKey(classId, "extractedText"), text);
         localStorage.setItem(studioKey(classId, "questions"), JSON.stringify(questionsResult));
         if (savedResult.length > 0) setCurrentStep("saved");
-        else if (text) setCurrentStep("extract");
+        else if (text) setCurrentStep("generate");
       } catch {
         localStorage.removeItem(studioKey(classId, "uploadId"));
       } finally {
@@ -1079,15 +1252,46 @@ export function ContentStudioPage() {
   }
 
   function handleFile(file) {
+    if (!file) return;
     const suffix = file.name.split(".").pop()?.toLowerCase();
     if (!["pdf", "pptx"].includes(suffix)) {
       notifyError(new Error("Only PPTX and PDF files are supported."), "Unsupported file");
       setSelectedFile(null);
+      setPendingGenerationFile(null);
       return;
     }
     setError("");
     setSelectedFile(file);
+    setPendingGenerationFile(file);
     setProgress(0);
+    setGenerationConfirmOpen(true);
+  }
+
+  function cancelGenerationStart() {
+    if (isUploading || isGenerating) return;
+    setGenerationConfirmOpen(false);
+    setPendingGenerationFile(null);
+    setSelectedFile(null);
+    setProgress(0);
+  }
+
+  function handlePendingBloomChange(planIndex, level) {
+    const nextPlan = buildGenerationPlan(generationSettings).map((item, index) => (
+      index === planIndex ? { ...item, level } : item
+    ));
+    setGenerationSettings({
+      ...generationSettings,
+      bloom_preference: "auto",
+      bloom_plan: nextPlan,
+    });
+  }
+
+  function confirmGenerationStart() {
+    if (!pendingGenerationFile || !classId || isUploading || isGenerating) return;
+    const file = pendingGenerationFile;
+    setGenerationConfirmOpen(false);
+    setPendingGenerationFile(null);
+    setCurrentStep("generate");
     void handleUpload(file);
   }
 
@@ -1095,6 +1299,7 @@ export function ContentStudioPage() {
     const activeFile = fileOverride ?? selectedFile;
     if (!activeFile || !classId || isUploading) return;
     setIsUploading(true);
+    setCurrentStep("generate");
     setError("");
     try {
       const result = await uploadInstructorLecture(activeFile, setProgress, classId);
@@ -1111,12 +1316,13 @@ export function ContentStudioPage() {
       localStorage.setItem(studioKey(classId, "questions"), JSON.stringify([]));
       localStorage.setItem(studioKey(classId, "approvedQuestionIds"), JSON.stringify([]));
       setCurrentStep("generate");
-      notifySuccess("Lecture uploaded", "Text was extracted. Generation is starting now.");
+      notifySuccess("Lecture uploaded", "Question generation is starting now.");
       setIsUploading(false);
       await handleGenerate({ uploadId: result.upload_id, extractedText: text });
     } catch (err) {
       notifyError(err, "Upload failed");
     } finally {
+      setPendingGenerationFile(null);
       setIsUploading(false);
     }
   }
@@ -1230,8 +1436,7 @@ export function ContentStudioPage() {
 
   async function handleRegenerateQuestion(question, index) {
     if (!question) return;
-    setIsGenerating(true);
-    setIsThinking(true);
+    setRegeneratingQuestionIndex(index);
     setGenerationProgress({ current: 0, total: 1 });
     setGenerationLabel(`Regenerating ${questionTypeLabel(question.type)} ${index + 1}...`);
     try {
@@ -1243,7 +1448,7 @@ export function ContentStudioPage() {
         },
       };
       const isPersisted = savedQuestions.some((item) => item.question_id === question.question_id);
-      const regenerated = isPersisted
+      const regeneratedResponse = isPersisted
         ? await regenerateInstructorQuestion(regeneratePayload)
         : (await generateInstructorQuestions({
             upload_id: uploadId,
@@ -1255,16 +1460,18 @@ export function ContentStudioPage() {
             question_index: index + 1,
             avoid_questions: generatedQuestions.map((item) => item.question_text).filter(Boolean),
           }))[0];
-      setGeneratedQuestions((current) => current.map((item) => (item.question_id === question.question_id ? regenerated : item)));
-      setSavedQuestions((current) => current.filter((item) => item.question_id !== question.question_id));
+      const regenerated = getRegeneratedQuestion(question, regeneratedResponse);
+      setGeneratedQuestions((current) => current.map((item, itemIndex) => (itemIndex === index ? regenerated : item)));
+      if (question.question_id) {
+        setSavedQuestions((current) => current.filter((item) => item.question_id !== question.question_id));
+      }
       setGenerationProgress({ current: 1, total: 1 });
       setGenerationPhase("reviewing");
       notifySuccess("Question regenerated", "A new version is ready for review.");
     } catch (err) {
       notifyError(err, "Question regeneration failed");
     } finally {
-      setIsThinking(false);
-      setIsGenerating(false);
+      setRegeneratingQuestionIndex(null);
     }
   }
 
@@ -1272,7 +1479,11 @@ export function ContentStudioPage() {
     setIsReconstructing(true);
     setError("");
     try {
-      const result = await reconstructInstructorPresentation({ upload_id: uploadId, question_ids: approvedQuestionIds });
+      const result = await reconstructInstructorPresentation({
+        upload_id: uploadId,
+        question_ids: approvedQuestionIds,
+        session_code: createdSession?.session_code ?? null,
+      });
       setPresentation(result);
       await downloadApiFile(result.download_url, result.filename);
       notifySuccess("PPTX ready", "The updated deck download has started.");
@@ -1308,26 +1519,55 @@ export function ContentStudioPage() {
     }
   }
 
+  function handleFinishQuestionReview() {
+    setEditingSavedQuestionId(null);
+    setCurrentStep("session");
+    notifySuccess("Review complete", "Question previews are hidden. The classroom package is ready.");
+  }
+
+  function handleStartNewFile() {
+    if (!classId || isUploading || isExtracting || isGenerating || isApproving || regeneratingQuestionIndex !== null) return;
+    setCurrentStep("upload");
+    setSelectedFile(null);
+    setPendingGenerationFile(null);
+    setGenerationConfirmOpen(false);
+    setUploadId(null);
+    setUpload(null);
+    setExtractedText("");
+    setGeneratedQuestions([]);
+    setSavedQuestions([]);
+    setGenerationPhase("idle");
+    setIsThinking(false);
+    setRegeneratingQuestionIndex(null);
+    setEditingSavedQuestionId(null);
+    setProgress(0);
+    setGenerationProgress({ current: 0, total: 0 });
+    setGenerationLabel("Ready to generate questions");
+    setError("");
+    setPresentation(null);
+    setCreatedSession(null);
+    localStorage.removeItem(studioKey(classId, "uploadId"));
+    localStorage.removeItem(studioKey(classId, "extractedText"));
+    localStorage.setItem(studioKey(classId, "questions"), JSON.stringify([]));
+    localStorage.setItem(studioKey(classId, "approvedQuestionIds"), JSON.stringify([]));
+    localStorage.setItem("instructorApprovedQuestionIds", JSON.stringify([]));
+    localStorage.removeItem("instructorSession");
+    notifySuccess("Ready for another file", "Choose a new lecture material to start again.");
+  }
+
   const selectedClass = classes.find((classDoc) => classDoc.class_id === selectedClassId);
   const pendingReviewCount = generatedQuestions.filter((question) => getQuestionReviewStatus(question, savedQuestions) !== "approved").length;
   const classroomReady = generatedQuestions.length > 0 && pendingReviewCount === 0;
-  const slidesExtracted =
-    upload?.slide_count ??
-    upload?.slides_count ??
-    upload?.metadata?.slide_count ??
-    (extractedText ? Math.max(1, Math.ceil(extractedText.length / 1200)) : 0);
-  const activeStage = createdSession || currentStep === "session" || classroomReady
+  const activeStage = createdSession || currentStep === "session"
     ? "ready"
     : generatedQuestions.length > 0
       ? "review"
-      : isGenerating || isThinking || currentStep === "generate"
+      : isUploading || isExtracting || isGenerating || isThinking || uploadId || extractedText || currentStep === "generate"
         ? "generate"
-        : isUploading || isExtracting || uploadId || extractedText
-          ? "analyze"
-      : "upload";
+        : "upload";
   useEffect(() => {
     localStorage.setItem("contentStudio:activeStage", activeStage);
-    window.dispatchEvent(new CustomEvent("content-studio-stage", { detail: { stage: activeStage } }));
+    window.dispatchEvent(new window.CustomEvent("content-studio-stage", { detail: { stage: activeStage } }));
   }, [activeStage]);
 
   const processingState = getProcessingState({
@@ -1343,17 +1583,11 @@ export function ContentStudioPage() {
     isThinking,
     error,
   });
-  const workflowStats = [
-    { label: "Slides extracted", value: slidesExtracted ? slidesExtracted.toLocaleString() : "0" },
-    { label: "Questions generated", value: generatedQuestions.length.toLocaleString() },
-    { label: "Pending review", value: pendingReviewCount.toLocaleString() },
-    { label: "Status", value: activeStage === "ready" ? "Ready" : activeStage === "review" ? "Review" : activeStage === "generate" ? "Working" : activeStage === "analyze" ? "Analyzing" : "Upload" },
-  ];
   const workflowActionBar = (
     <WorkflowActionBar
       approvedCount={approvedCount}
       canDownload={Boolean(uploadId && approvedQuestionIds.length > 0)}
-      canCreateSession={approvedQuestionIds.length > 0}
+      canCreateSession={currentStep === "session" && approvedQuestionIds.length > 0}
       isReconstructing={isReconstructing}
       isCreatingSession={isCreatingSession}
       presentation={presentation}
@@ -1363,9 +1597,18 @@ export function ContentStudioPage() {
       onCreateSession={handleCreateSession}
     />
   );
+  const pendingGenerationTotal = pendingGenerationPlan.length;
+  const workflowBusy =
+    isUploading ||
+    isExtracting ||
+    isGenerating ||
+    isApproving ||
+    isReconstructing ||
+    isCreatingSession ||
+    regeneratingQuestionIndex !== null;
   const primaryAction = activeStage === "upload" ? (
     <UploadActionButton label="Choose file" loading={isUploading} disabled={!classId || isUploading} onFile={handleFile} />
-  ) : activeStage === "review" ? (
+  ) : activeStage === "review" && pendingReviewCount > 0 ? (
     <Button type="button" variant="success" onClick={handleApproveAllQuestions} loading={isApproving} disabled={pendingReviewCount === 0}>
       <CheckCircle2 size={17} />
       Approve all
@@ -1378,39 +1621,45 @@ export function ContentStudioPage() {
       <Rocket size={17} />
       Launch live session
     </Link>
-  ) : activeStage === "ready" ? (
-    <Button type="button" variant="success" onClick={handleCreateSession} loading={isCreatingSession} disabled={approvedQuestionIds.length === 0}>
-      <Rocket size={17} />
-      Launch live session
-    </Button>
-  ) : (
+  ) : activeStage === "generate" ? (
     <Button type="button" variant="outline" disabled>
       <Loader2 className="animate-spin" size={17} />
       AI working
     </Button>
+  ) : (
+    null
   );
+  const secondaryAction = activeStage !== "upload" ? (
+    <Button type="button" variant="outline" onClick={handleStartNewFile} disabled={!classId || workflowBusy}>
+      <UploadCloud size={17} />
+      New file
+    </Button>
+  ) : null;
   const mainPanel = generatedQuestions.length > 0 && !isGenerating ? (
     <div className="grid gap-4">
-      {classroomReady && workflowActionBar}
-      <QuestionReviewFeed
-        questions={generatedQuestions}
-        savedQuestions={savedQuestions}
-        editingQuestionId={editingSavedQuestionId}
-        busy={isApproving || isGenerating}
-        onPatch={handleQuestionChange}
-        onApprove={handleApproveQuestion}
-        onApproveAll={handleApproveAllQuestions}
-        onEdit={setEditingSavedQuestionId}
-        onCancelEdit={() => setEditingSavedQuestionId(null)}
-        onRegenerate={handleRegenerateQuestion}
-      />
+      {classroomReady && currentStep === "session" && workflowActionBar}
+      {!(classroomReady && currentStep === "session") && (
+        <QuestionReviewFeed
+          questions={generatedQuestions}
+          savedQuestions={savedQuestions}
+          editingQuestionId={editingSavedQuestionId}
+          busy={isApproving || isGenerating || regeneratingQuestionIndex !== null}
+          approving={isApproving}
+          regeneratingQuestionIndex={regeneratingQuestionIndex}
+          onPatch={handleQuestionChange}
+          onApprove={handleApproveQuestion}
+          onDoneReview={handleFinishQuestionReview}
+          onEdit={setEditingSavedQuestionId}
+          onCancelEdit={() => setEditingSavedQuestionId(null)}
+          onRegenerate={handleRegenerateQuestion}
+        />
+      )}
     </div>
   ) : uploadId || isUploading || isExtracting || isGenerating || extractedText ? (
     <AIProcessingCard
       state={processingState}
       upload={upload}
       selectedFile={selectedFile}
-      extractedText={extractedText}
       generatedQuestions={generatedQuestions}
     />
   ) : (
@@ -1432,10 +1681,62 @@ export function ContentStudioPage() {
         classes={classes}
         selectedClassId={selectedClassId}
         onSelectClass={handleClassSelect}
-        stats={workflowStats}
         activeStage={activeStage}
         primaryAction={primaryAction}
+        secondaryAction={secondaryAction}
       />
+
+      <Modal
+        open={generationConfirmOpen}
+        title="Start generation?"
+        onClose={cancelGenerationStart}
+        closeDisabled={isUploading || isGenerating}
+        panelClassName="max-h-[calc(100vh-2rem)] max-w-2xl overflow-y-auto"
+      >
+        <div className="grid gap-4">
+          <p className="text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">
+            Content Studio will use this file, question mix, and Bloom focus plan to create questions for review.
+          </p>
+          <div className="grid gap-2 rounded-[24px] border border-role-border bg-role-hover p-4 dark:border-slate-800 dark:bg-slate-950">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-wide text-[var(--color-muted)]">Class</p>
+              <p className="mt-1 text-sm font-black text-role-text dark:text-white">{selectedClass?.name ?? "No class selected"}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-wide text-[var(--color-muted)]">File</p>
+              <p className="mt-1 truncate text-sm font-black text-role-text dark:text-white">{pendingGenerationFile?.name ?? "No file selected"}</p>
+            </div>
+            {/* <div className="grid gap-2 sm:grid-cols-3">
+              <div className="rounded-[18px] bg-white p-3 dark:bg-slate-900">
+                <p className="text-[11px] font-black uppercase tracking-wide text-[var(--color-muted)]">MCQs</p>
+                <p className="mt-1 text-lg font-black text-role-text dark:text-white">{generationSettings.mcq_count}</p>
+              </div>
+              <div className="rounded-[18px] bg-white p-3 dark:bg-slate-900">
+                <p className="text-[11px] font-black uppercase tracking-wide text-[var(--color-muted)]">Short</p>
+                <p className="mt-1 text-lg font-black text-role-text dark:text-white">{generationSettings.short_answer_count}</p>
+              </div>
+              <div className="rounded-[18px] bg-white p-3 dark:bg-slate-900">
+                <p className="text-[11px] font-black uppercase tracking-wide text-[var(--color-muted)]">Total</p>
+                <p className="mt-1 text-lg font-black text-role-text dark:text-white">{pendingGenerationTotal}</p>
+              </div>
+            </div> */}
+            <GenerationPlanEditor
+              plan={pendingGenerationPlan}
+              disabled={isUploading || isGenerating}
+              onLevelChange={handlePendingBloomChange}
+            />
+          </div>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" onClick={cancelGenerationStart} disabled={isUploading || isGenerating}>
+              Cancel
+            </Button>
+            <Button type="button" variant="role" onClick={confirmGenerationStart} disabled={!pendingGenerationFile || !classId || pendingGenerationTotal === 0} loading={isUploading || isGenerating}>
+              <Sparkles size={17} />
+              Start generation
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {!classId && <EmptyState title="Create a class first" description="Content Studio needs a class before lecture uploads, generated questions, and live sessions can be organized." />}
 
@@ -1447,15 +1748,6 @@ export function ContentStudioPage() {
           questions={generatedQuestions}
           savedQuestions={savedQuestions}
           createdSession={createdSession}
-          aiPanel={(
-            <AiServicePanel
-              status={aiStatus}
-              checking={isCheckingAi}
-              starting={isStartingAi}
-              onRefresh={refreshAiStatus}
-              onStart={handleStartAi}
-            />
-          )}
         />
       </div>}
     </div>

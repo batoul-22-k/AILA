@@ -281,17 +281,10 @@ select {
   color: var(--role-text);
 }
 
-[data-role="student"].role-root {
-  background:
-    radial-gradient(circle at 18% 8%, rgba(162, 183, 214, 0.28), transparent 28rem),
-    radial-gradient(circle at 86% 18%, rgba(180, 135, 164, 0.26), transparent 30rem),
-    linear-gradient(145deg, #020613 0%, #173d63 48%, #020613 100%),
-    var(--role-bg);
-}
-
 [data-app-theme].role-root,
 [data-role="admin"].role-root,
-[data-role="instructor"].role-root {
+[data-role="instructor"].role-root,
+[data-role="student"].role-root {
   background: var(--role-bg);
 }
 
@@ -309,10 +302,6 @@ select {
 
 .role-main {
   max-width: 88rem;
-}
-
-[data-role="student"] .role-main {
-  max-width: 72rem;
 }
 
 [data-role="admin"] .role-main {
@@ -499,12 +488,6 @@ select {
 [data-role="student"] .adaptive-button {
   min-height: 3rem;
   border-radius: 999px;
-  box-shadow: 0 16px 36px rgba(2, 6, 19, 0.18);
-}
-
-[data-app-theme][data-role="student"] .adaptive-button {
-  min-height: 2.75rem;
-  border-radius: 9px;
   box-shadow: none;
 }
 
@@ -529,14 +512,8 @@ select {
 
 [data-role="student"] .adaptive-input {
   min-height: 3rem;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 14px 30px rgba(2, 6, 19, 0.18);
-}
-
-[data-app-theme][data-role="student"] .adaptive-input {
-  min-height: 2.75rem;
-  background: color-mix(in srgb, var(--color-surface) 96%, white);
-  box-shadow: none;
+  background: color-mix(in srgb, var(--role-surface) 96%, white);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
 }
 
 .adaptive-answer {
@@ -551,12 +528,6 @@ select {
 
 [data-role="student"] .adaptive-answer {
   min-height: 3.5rem;
-  border-color: rgba(162, 183, 214, 0.34);
-  box-shadow: var(--role-card-shadow);
-}
-
-[data-app-theme][data-role="student"] .adaptive-answer {
-  min-height: 3rem;
   border-color: var(--role-border);
   box-shadow: none;
 }
@@ -579,22 +550,26 @@ select {
 }
 
 [data-role="instructor"] .role-main,
-[data-role="admin"] .role-main {
+[data-role="admin"] .role-main,
+[data-role="student"] .role-main {
   padding-top: 1.5rem;
 }
 
 [data-role="instructor"] .role-topbar,
-[data-role="admin"] .role-topbar {
+[data-role="admin"] .role-topbar,
+[data-role="student"] .role-topbar {
   box-shadow: none;
 }
 
 [data-role="instructor"] .role-nav-label,
-[data-role="admin"] .role-nav-label {
+[data-role="admin"] .role-nav-label,
+[data-role="student"] .role-nav-label {
   letter-spacing: 0;
 }
 
 [data-role="instructor"] .role-sidebar nav a,
-[data-role="admin"] .role-sidebar nav a {
+[data-role="admin"] .role-sidebar nav a,
+[data-role="student"] .role-sidebar nav a {
   border-radius: 999px;
 }
 
@@ -603,7 +578,10 @@ select {
 [data-role="instructor"] .text-slate-800,
 [data-role="admin"] .text-slate-950,
 [data-role="admin"] .text-slate-900,
-[data-role="admin"] .text-slate-800 {
+[data-role="admin"] .text-slate-800,
+[data-role="student"] .text-slate-950,
+[data-role="student"] .text-slate-900,
+[data-role="student"] .text-slate-800 {
   color: var(--role-text);
 }
 
@@ -612,81 +590,31 @@ select {
 [data-role="instructor"] .text-slate-500,
 [data-role="admin"] .text-slate-700,
 [data-role="admin"] .text-slate-600,
-[data-role="admin"] .text-slate-500 {
+[data-role="admin"] .text-slate-500,
+[data-role="student"] .text-slate-700,
+[data-role="student"] .text-slate-600,
+[data-role="student"] .text-slate-500 {
   color: var(--color-muted);
 }
 
-[data-role="student"] .role-topbar {
-  border-color: rgba(162, 183, 214, 0.16);
-  background: rgba(2, 6, 19, 0.72);
-  color: white;
-}
-
-[data-role="student"] .role-topbar .text-slate-950,
-[data-role="student"] .role-topbar .text-slate-900,
-[data-role="student"] .role-topbar .text-slate-800,
-[data-role="student"] .role-user-chip .text-slate-950,
-[data-role="student"] .role-user-chip .text-slate-900,
-[data-role="student"] .role-brand-card .text-slate-950,
-[data-role="student"] .role-brand-card .text-slate-900 {
-  color: #eaf1fa;
-}
-
-[data-role="student"] .role-topbar .text-slate-500,
-[data-role="student"] .role-topbar .text-slate-400,
-[data-role="student"] .role-user-chip .text-slate-500,
-[data-role="student"] .role-user-chip .text-slate-400,
-[data-role="student"] .role-brand-card .text-slate-500,
-[data-role="student"] .role-brand-card .text-slate-400 {
-  color: #a2b7d6;
-}
-
-[data-role="student"] .role-brand-card,
-[data-role="student"] .role-sidebar > div,
-[data-role="student"] .role-user-chip,
-[data-role="student"] .role-search {
-  border-color: rgba(162, 183, 214, 0.18);
-  background: rgba(2, 6, 19, 0.48);
-  color: #eaf1fa;
-  box-shadow: 0 24px 70px rgba(2, 6, 19, 0.26);
-  backdrop-filter: blur(18px);
-}
-
-[data-role="student"] .adaptive-card:not([data-surface="custom"]) {
-  background: rgba(255, 255, 255, 0.94);
-  color: #020613;
-}
-
-[data-role="student"] .role-sidebar nav a:not([aria-current="page"]) {
-  color: #d7e2f0;
-}
-
-[data-role="student"] .page-grid > .flex:first-child h1 {
-  color: #ffffff;
-}
-
-[data-role="student"] .page-grid > .flex:first-child p:not(:first-child) {
-  color: #d7e2f0;
-}
-
 [data-role="student"] .role-mobile-nav > div {
-  border-color: rgba(162, 183, 214, 0.22);
-  background: rgba(2, 6, 19, 0.72);
-  box-shadow: 0 24px 70px rgba(2, 6, 19, 0.3);
+  border-color: var(--role-card-border);
+  background: color-mix(in srgb, var(--role-surface) 94%, transparent);
+  box-shadow: var(--role-card-shadow);
 }
 
 [data-role="student"] .role-mobile-nav a:not([aria-current="page"]) {
-  color: #a2b7d6;
+  color: var(--color-muted);
 }
 
 [data-role="student"] .role-mobile-nav a[aria-current="page"] {
-  background: rgba(162, 183, 214, 0.18);
+  background: var(--role-primary);
   color: #ffffff;
-  box-shadow: inset 0 0 0 1px rgba(162, 183, 214, 0.34);
+  box-shadow: none;
 }
 
 [data-role="student"] .student-settings .adaptive-card:not([data-surface="custom"]) {
-  background: rgba(255, 255, 255, 0.96);
+  background: color-mix(in srgb, var(--role-surface) 98%, transparent);
 }
 
 .subtle-scroll {

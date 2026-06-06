@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { RoleGate } from "./components/RoleGate";
 import { RoleLayout } from "./components/RoleLayout";
+import { AdminAccountsPage } from "./pages/admin/AdminAccountsPage";
 import { AdminDashboardPage } from "./pages/admin/AdminDashboardPage";
 import { AtRiskPage } from "./pages/admin/AtRiskPage";
 import { ClassesOverviewPage } from "./pages/admin/ClassesOverviewPage";
@@ -88,6 +89,7 @@ export default function App() {
         <Route element={<RoleGate allowed="admin" />}>
           <Route element={<RoleLayout role="admin" />}>
             <Route path="admin" element={<AdminDashboardPage />} />
+            <Route path="admin/accounts" element={<AdminAccountsPage />} />
             <Route path="admin/classes" element={<ClassesOverviewPage />} />
             <Route path="admin/instructors" element={<InstructorClassComparisonPage />} />
             <Route path="admin/comparison" element={<InstructorClassComparisonPage />} />

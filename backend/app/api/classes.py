@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.auth import get_current_user, require_class_role
+from app.auth import account_role_for_user, get_current_user, require_class_role
 from app.database import MongoCollections, get_db
 from app.models import ClassCreate, ClassOut, ClassStatusUpdate, ClassStudentOut, EnrollStudentRequest, new_id, utc_now
 from app.services import serialize_document
@@ -21,7 +21,7 @@ def class_out_from_row(row: dict) -> ClassOut:
 
 
 async def require_class_manager(db: AsyncIOMotorDatabase, user: dict, class_id: str) -> None:
-    if user.get("global_role") == "admin":
+    if account_role_for_user(user) == "admin":
         return
     await require_class_role(db, user, class_id, "instructor")
 
@@ -35,7 +35,7 @@ async def list_classes(
 ) -> list[ClassOut]:
     show_inactive = include_inactive or include_archived
     status_filter = {} if show_inactive else {"$or": [{"status": "active"}, {"status": {"$exists": False}}]}
-    if user.get("global_role") == "admin":
+    if account_role_for_user(user) == "admin":
         rows = await db[MongoCollections.classes].find(status_filter).sort("created_at", -1).to_list(length=500)
     else:
         memberships = await db[MongoCollections.class_memberships].find(
@@ -55,7 +55,7 @@ async def create_class(
     user: dict = Depends(get_current_user),
 ) -> ClassOut:
     requested_instructor_ids = payload.instructor_ids or ([payload.instructor_id] if payload.instructor_id else [user["user_id"]])
-    if user.get("global_role") != "admin":
+    if account_role_for_user(user) != "admin":
         if user["user_id"] not in requested_instructor_ids:
             requested_instructor_ids = [user["user_id"]]
 
@@ -71,7 +71,7 @@ async def create_class(
     )
     await db[MongoCollections.classes].insert_one(class_doc.model_dump())
     for instructor_id in requested_instructor_ids:
-        if instructor_id == user["user_id"] or user.get("global_role") == "admin":
+        if instructor_id == user["user_id"] or account_role_for_user(user) == "admin":
             await db[MongoCollections.class_memberships].update_one(
                 {"class_id": class_doc.class_id, "user_id": instructor_id, "role": "instructor"},
                 {
@@ -211,7 +211,7 @@ async def enroll_class_student(
     student = await db[MongoCollections.users].find_one({"user_id": payload.user_id})
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
-    if student.get("global_role") == "admin":
+    if account_role_for_user(student) == "admin" or account_role_for_user(student) == "instructor":
         raise HTTPException(status_code=400, detail="Only student users can be enrolled in a class")
     instructor_membership = await db[MongoCollections.class_memberships].find_one(
         {"user_id": payload.user_id, "role": "instructor", "status": "active"}

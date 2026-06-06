@@ -13,13 +13,18 @@ export function ReconstructPresentationPage() {
   const { showToast } = useToast();
   const uploadId = localStorage.getItem("instructorUploadId");
   const approvedQuestionIds = JSON.parse(localStorage.getItem("instructorApprovedQuestionIds") || "[]");
+  const savedSession = JSON.parse(localStorage.getItem("instructorSession") || "null");
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
 
   async function handleReconstruct() {
     setLoading(true);
     try {
-      const response = await reconstructInstructorPresentation({ upload_id: uploadId, question_ids: approvedQuestionIds });
+      const response = await reconstructInstructorPresentation({
+        upload_id: uploadId,
+        question_ids: approvedQuestionIds,
+        session_code: savedSession?.session_code ?? null,
+      });
       setResult(response);
       showToast({ title: "PPTX ready", description: "The reconstructed presentation is ready to download.", tone: "success" });
     } catch (err) {
@@ -34,7 +39,7 @@ export function ReconstructPresentationPage() {
       <PageHeader
         eyebrow="PowerPoint reconstruction"
         title="Create engagement slide deck"
-        description="Approved questions are inserted into a clean PPTX deck for classroom use."
+        description="Approved questions are inserted into a clean PPTX deck, with a join-code slide added after the title slide."
         tone="role"
       />
 

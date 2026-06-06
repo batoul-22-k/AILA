@@ -4,9 +4,9 @@ import string
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.auth import get_current_user, require_class_role
+from app.auth import account_role_for_user, get_current_user, require_class_role
 from app.database import MongoCollections, get_db, get_database
-from app.models import CreateSessionRequest, JoinSessionRequest, SessionOut, new_id, utc_now
+from app.models import CreateSessionRequest, JoinSessionRequest, LiveQuestionOut, SessionOut, new_id, utc_now
 from app.realtime import manager
 from app.services import get_live_session_stats, serialize_document
 
@@ -33,6 +33,7 @@ async def create_live_session(
         class_id=payload.class_id,
         instructor_id=user["user_id"],
         question_ids=payload.question_ids,
+        active_question_id=payload.question_ids[0] if payload.question_ids else None,
         session_code=make_session_code(),
         status="active",
         created_at=utc_now(),
@@ -76,6 +77,41 @@ async def join_session_by_code(
     return SessionOut(**serialize_document(session))
 
 
+@router.get("/{session_id}/questions", response_model=list[LiveQuestionOut])
+async def get_session_questions(
+    session_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: dict = Depends(get_current_user),
+) -> list[LiveQuestionOut]:
+    session = await db[MongoCollections.sessions].find_one({"session_id": session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await require_class_role(db, user, session["class_id"], "student")
+
+    question_ids = session.get("question_ids", [])
+    rows = await db[MongoCollections.approved_questions].find({"question_id": {"$in": question_ids}}).to_list(length=100)
+    if len(rows) < len(question_ids):
+        found_ids = {row["question_id"] for row in rows}
+        fallback_rows = await db[MongoCollections.generated_questions].find(
+            {"question_id": {"$in": [question_id for question_id in question_ids if question_id not in found_ids]}}
+        ).to_list(length=100)
+        rows.extend(fallback_rows)
+
+    questions_by_id = {row["question_id"]: row for row in rows}
+    return [
+        LiveQuestionOut(
+            question_id=row["question_id"],
+            type=row.get("type", "mcq"),
+            question_text=row.get("question_text") or row.get("prompt", ""),
+            options=row.get("options", []),
+            bloom_level=row.get("bloom_level"),
+            difficulty=row.get("difficulty"),
+        )
+        for question_id in question_ids
+        if (row := questions_by_id.get(question_id))
+    ]
+
+
 @router.get("/{session_id}/stats")
 async def get_session_statistics(
     session_id: str,
@@ -85,7 +121,7 @@ async def get_session_statistics(
     session = await db[MongoCollections.sessions].find_one({"session_id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    if user.get("global_role") != "admin":
+    if account_role_for_user(user) != "admin":
         instructor_membership = await db[MongoCollections.class_memberships].find_one(
             {"class_id": session["class_id"], "user_id": user["user_id"], "role": "instructor", "status": "active"}
         )

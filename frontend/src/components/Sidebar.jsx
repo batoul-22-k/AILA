@@ -9,7 +9,6 @@ import { AilaIcon, AilaLogo } from "./AilaLogo";
 
 const studioSteps = [
   { id: "upload", label: "Upload" },
-  { id: "analyze", label: "Analyze" },
   { id: "generate", label: "Generate" },
   { id: "review", label: "Review" },
   { id: "ready", label: "Ready" },
@@ -25,7 +24,6 @@ export function Sidebar({ role }) {
   const palette = meta.palette;
   const [classes, setClasses] = useState([]);
   const [studioStage, setStudioStage] = useState(getStoredStudioStage);
-  const activeClassId = localStorage.getItem("instructorSelectedClassId") || "";
   const showClassSubnav = role === "instructor" && location.pathname.startsWith("/instructor/classes");
   const showStudioSubnav = role === "instructor" && location.pathname.startsWith("/instructor/content-studio");
   const activeStageIndex = Math.max(0, studioSteps.findIndex((step) => step.id === studioStage));
@@ -34,7 +32,7 @@ export function Sidebar({ role }) {
     if (role !== "instructor") return;
     try {
       const result = await listClasses();
-      setClasses(result.filter((classDoc) => classDoc.status !== "inactive"));
+      setClasses(result.filter((classDoc) => classDoc.status?.toLowerCase() !== "inactive"));
     } catch {
       setClasses([]);
     }
@@ -113,12 +111,13 @@ export function Sidebar({ role }) {
                       <NavLink
                         key={classDoc.class_id}
                         to={`/instructor/classes/${classDoc.class_id}`}
+                        end
                         className={({ isActive }) =>
                           cn(
-                            "focus-ring flex min-h-9 items-center gap-2 rounded-full px-3 py-2 text-xs font-black transition",
-                            isActive || activeClassId === classDoc.class_id
-                              ? "bg-role-primary text-white shadow-soft"
-                              : "text-slate-500 hover:bg-role-hover hover:text-role-primary dark:text-slate-300",
+                            "focus-ring flex min-h-9 items-center gap-2 rounded-full border px-3 py-2 text-xs font-black transition",
+                            isActive
+                              ? "border-role-primary bg-role-hover text-role-primary shadow-sm"
+                              : "border-transparent text-slate-500 hover:bg-role-hover hover:text-role-primary dark:text-slate-300",
                           )
                         }
                       >

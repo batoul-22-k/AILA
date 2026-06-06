@@ -10,6 +10,22 @@ from app.services import serialize_document
 SESSION_PREFIX = "mock-session:"
 
 
+def account_role_for_user(user: dict) -> str:
+    user_id = user.get("user_id", "")
+    if user_id.startswith("admin_"):
+        return "admin"
+    if user_id.startswith("instructor_"):
+        return "instructor"
+    if user_id.startswith("student_"):
+        return "student"
+    role = user.get("account_role")
+    if role in {"student", "instructor", "admin"}:
+        return role
+    if user.get("global_role") == "admin":
+        return "admin"
+    return "student"
+
+
 def make_session_token(user_id: str) -> str:
     # TODO: Replace this placeholder token with signed server-side sessions or JWT.
     return f"{SESSION_PREFIX}{user_id}"
@@ -45,22 +61,35 @@ async def build_workspaces(db: AsyncIOMotorDatabase, user: dict) -> list[Workspa
         class_doc = await db[MongoCollections.classes].find_one({"class_id": membership["class_id"]})
         if class_doc and class_doc.get("status", "active") in {"archived", "inactive"}:
             continue
+        instructor_name = None
+        instructor_ids = class_doc.get("instructor_ids", []) if class_doc else []
+        if instructor_ids:
+            instructor = await db[MongoCollections.users].find_one({"user_id": instructor_ids[0]})
+            instructor_name = instructor.get("name") if instructor else None
         workspaces.append(
             WorkspaceOut(
                 type=membership["role"],
                 class_id=membership["class_id"],
                 class_name=class_doc.get("name") if class_doc else membership["class_id"],
+                instructor_name=instructor_name,
+                joined_at=membership.get("created_at"),
+                last_activity_at=membership.get("updated_at") or membership.get("last_seen_at"),
             )
         )
 
-    if user.get("global_role") == "admin":
+    account_role = account_role_for_user(user)
+    has_instructor_workspace = any(workspace.type == "instructor" for workspace in workspaces)
+    if account_role == "instructor" and not has_instructor_workspace:
+        workspaces.append(WorkspaceOut(type="instructor", label="Instructor Workspace"))
+
+    if account_role == "admin":
         workspaces.append(WorkspaceOut(type="admin", label="Institution Administration"))
 
     return workspaces
 
 
 async def require_admin(db: AsyncIOMotorDatabase, user: dict) -> None:
-    if user.get("global_role") != "admin":
+    if account_role_for_user(user) != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin permission required")
 
 
@@ -70,7 +99,7 @@ async def require_class_role(
     class_id: str,
     role: Literal["student", "instructor"],
 ) -> None:
-    if user.get("global_role") == "admin":
+    if account_role_for_user(user) == "admin":
         return
 
     membership = await db[MongoCollections.class_memberships].find_one(
@@ -90,7 +119,7 @@ async def require_any_class_role(
     user: dict,
     role: Literal["student", "instructor"],
 ) -> list[str]:
-    if user.get("global_role") == "admin":
+    if account_role_for_user(user) == "admin":
         classes = await db[MongoCollections.classes].find({}, {"class_id": 1}).to_list(length=500)
         return [class_doc["class_id"] for class_doc in classes]
 
@@ -108,5 +137,6 @@ def public_user(user: dict) -> UserOut:
         user_id=user["user_id"],
         name=user["name"],
         email=user["email"],
-        global_role=user.get("global_role", "user"),
+        account_role=account_role_for_user(user),
+        created_at=user.get("created_at"),
     )

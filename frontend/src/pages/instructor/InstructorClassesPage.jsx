@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, CheckCircle2, Plus } from "lucide-react";
+import { ArrowRight, BookOpen, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -15,7 +15,6 @@ export function InstructorClassesPage() {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const [classes, setClasses] = useState([]);
-  const [selectedClassId, setSelectedClassId] = useState(localStorage.getItem("instructorSelectedClassId") || "");
   const [form, setForm] = useState({
     name: "AI Fundamentals",
     description: "Interactive lecture engagement",
@@ -29,11 +28,6 @@ export function InstructorClassesPage() {
     try {
       const allClasses = await listClasses({ includeInactive: true });
       setClasses(allClasses);
-      const nextSelected = selectedClassId || allClasses.find((classDoc) => classDoc.status !== "Inactive")?.class_id || allClasses[0]?.class_id || "";
-      if (nextSelected) {
-        setSelectedClassId(nextSelected);
-        localStorage.setItem("instructorSelectedClassId", nextSelected);
-      }
     } catch (err) {
       showToast({ title: "Could not load classes", description: err instanceof Error ? err.message : "Could not load classes", tone: "error" });
     } finally {
@@ -46,9 +40,6 @@ export function InstructorClassesPage() {
   }, []);
 
   function openClass(classDoc) {
-    setSelectedClassId(classDoc.class_id);
-    localStorage.setItem("instructorSelectedClassId", classDoc.class_id);
-    localStorage.setItem("instructorSelectedClassName", classDoc.name);
     navigate(`/instructor/classes/${classDoc.class_id}`);
   }
 
@@ -58,7 +49,7 @@ export function InstructorClassesPage() {
     try {
       const created = await createClass(form);
       setClasses((current) => [created, ...current]);
-      window.dispatchEvent(new Event("instructor-classes-changed"));
+      window.dispatchEvent(new window.Event("instructor-classes-changed"));
       showToast({ title: "Class created", description: `Created ${created.name}. Content Studio is ready for this class.`, tone: "success" });
       openClass(created);
     } catch (err) {
@@ -68,14 +59,12 @@ export function InstructorClassesPage() {
     }
   }
 
-  const activeCount = classes.filter((classDoc) => classDoc.status !== "Inactive").length;
-  const inactiveCount = classes.filter((classDoc) => classDoc.status === "Inactive").length;
+  const activeCount = classes.filter((classDoc) => classDoc.status?.toLowerCase() !== "inactive").length;
+  const inactiveCount = classes.filter((classDoc) => classDoc.status?.toLowerCase() === "inactive").length;
 
   return (
     <div className="page-grid">
-      <PageHeader
-        eyebrow="Class Management"  
-              />
+      <PageHeader eyebrow="Class Management" />
 
       <div className="grid gap-3 sm:grid-cols-3">
         <DashboardCard>
@@ -134,11 +123,7 @@ export function InstructorClassesPage() {
                 key={classDoc.class_id}
                 type="button"
                 onClick={() => openClass(classDoc)}
-                className={`focus-ring rounded-[var(--role-radius)] border p-4 text-left transition-all duration-300 ${
-                  selectedClassId === classDoc.class_id
-                    ? "border-role-accent bg-role-hover"
-                    : "border-role-border bg-white hover:border-role-accent dark:bg-slate-900"
-                }`}
+                className="focus-ring rounded-[var(--role-radius)] border border-role-border bg-white p-4 text-left transition-all duration-300 hover:border-role-accent dark:bg-slate-900"
               >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
@@ -147,9 +132,10 @@ export function InstructorClassesPage() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {classDoc.semester && <Badge tone="violet">{classDoc.semester}</Badge>}
-                    <Badge tone={classDoc.status === "Inactive" ? "slate" : "green"}>{classDoc.status ?? "Active"}</Badge>
-                    {selectedClassId === classDoc.class_id && <Badge tone="green"><CheckCircle2 size={13} />Selected</Badge>}
-                    <Badge tone="teal"><ArrowRight size={13} /></Badge>
+                    <Badge tone={classDoc.status?.toLowerCase() === "inactive" ? "slate" : "green"}>{classDoc.status ?? "Active"}</Badge>
+                    <Badge tone="teal">
+                      <ArrowRight size={13} />
+                    </Badge>
                   </div>
                 </div>
               </button>

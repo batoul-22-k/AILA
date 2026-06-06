@@ -16,6 +16,9 @@ import fitz
 import qrcode
 from fastapi import UploadFile
 from pptx import Presentation
+from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
 from pptx.util import Inches, Pt
 
 from app.config import get_settings
@@ -535,34 +538,205 @@ def make_qr_base64(data: str) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
-def reconstruct_presentation(questions: list[InstructorQuestion], upload_id: str) -> tuple[str, Path]:
+def get_upload_file_path(upload_id: str, file_type: str | None = None) -> Path | None:
+    upload_dir = get_storage_root() / "uploads"
+    suffixes = [f".{file_type.lower().lstrip('.')}"] if file_type else [".pptx", ".pdf"]
+    for suffix in suffixes:
+        candidate = upload_dir / f"{upload_id}{suffix}"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def add_slide_title(slide, text: str) -> None:
+    if slide.shapes.title:
+        slide.shapes.title.text = text
+        return
+    title_box = slide.shapes.add_textbox(Inches(0.6), Inches(0.35), Inches(8.8), Inches(0.6))
+    paragraph = title_box.text_frame.paragraphs[0]
+    paragraph.text = text
+    paragraph.font.size = Pt(28)
+    paragraph.font.bold = True
+
+
+def style_shape(shape, fill: RGBColor, line: RGBColor | None = None) -> None:
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = fill
+    shape.line.color.rgb = line or fill
+
+
+def set_text_box(
+    shape,
+    text: str,
+    *,
+    size: int,
+    color: RGBColor,
+    bold: bool = False,
+    align: PP_ALIGN = PP_ALIGN.LEFT,
+) -> None:
+    frame = shape.text_frame
+    frame.clear()
+    frame.word_wrap = True
+    frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    frame.margin_left = Inches(0.18)
+    frame.margin_right = Inches(0.18)
+    frame.margin_top = Inches(0.08)
+    frame.margin_bottom = Inches(0.08)
+    paragraph = frame.paragraphs[0]
+    paragraph.text = text
+    paragraph.alignment = align
+    paragraph.font.size = Pt(size)
+    paragraph.font.bold = bold
+    paragraph.font.color.rgb = color
+
+
+def add_join_slide(presentation: Presentation, session_code: str | None = None, join_link: str | None = None) -> None:
+    # Mirror the look-and-feel of question slides so the deck stays consistent.
+    slide_width = presentation.slide_width
+    slide_height = presentation.slide_height
+    margin_x = Inches(0.8)
+    content_width = slide_width - (margin_x * 2)
+    teal = RGBColor(22, 119, 132)
+    deep_teal = RGBColor(8, 84, 97)
+    mint = RGBColor(222, 247, 235)
+    soft_bg = RGBColor(246, 249, 250)
+    white = RGBColor(255, 255, 255)
+    slate = RGBColor(71, 85, 105)
+    border = RGBColor(212, 226, 229)
+
+    layout = presentation.slide_layouts[6] if len(presentation.slide_layouts) > 6 else presentation.slide_layouts[-1]
+    slide = presentation.slides.add_slide(layout)
+    background = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, slide_width, slide_height)
+    style_shape(background, soft_bg)
+
+    header = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, margin_x, Inches(0.45), Inches(3.0), Inches(0.42))
+    style_shape(header, mint)
+    set_text_box(header, "JOIN SESSION", size=12, color=deep_teal, bold=True, align=PP_ALIGN.CENTER)
+
+    gap = Inches(0.3)
+    qr_width = Inches(2.2)
+    code_width = content_width - qr_width - gap
+
+    code_box = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, margin_x, Inches(1.15), code_width, Inches(2.4))
+    style_shape(code_box, white, border)
+    if session_code and not join_link:
+        join_link = make_join_link(session_code)
+    code_text = (
+        f"Session code: {session_code or '________'}\n\nJoin link:\n{join_link or '________'}\n"
+    )
+    set_text_box(code_box, code_text, size=18, color=RGBColor(15, 23, 42), bold=True, align=PP_ALIGN.LEFT)
+
+    qr_x = margin_x + code_width + gap
+    qr_box = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, qr_x, Inches(1.15), qr_width, qr_width)
+    style_shape(qr_box, white, border)
+    if join_link:
+        qr_image = qrcode.make(join_link)
+        buffer = io.BytesIO()
+        qr_image.save(buffer, format="PNG")
+        buffer.seek(0)
+        slide.shapes.add_picture(buffer, qr_x + Inches(0.12), Inches(1.27), width=qr_width - Inches(0.24), height=qr_width - Inches(0.24))
+    else:
+        set_text_box(qr_box, "QR code\nplaceholder", size=16, color=teal, bold=True, align=PP_ALIGN.CENTER)
+
+    #footer = slide.shapes.add_textbox(margin_x, slide_height - Inches(0.65), content_width, Inches(0.28))
+    #set_text_box(footer, "Add the join code and QR code manually or use the instructor dashboard to download the QR.", size=11, color=slate, align=PP_ALIGN.CENTER)
+
+    # Move this join slide to be right after the title (index 1)
+    try:
+        sldIdLst = presentation.slides._sldIdLst
+        last = sldIdLst[-1]
+        # remove last and insert at position 1
+        sldIdLst.remove(last)
+        sldIdLst.insert(1, last)
+    except Exception:
+        # best-effort; if manipulation fails leave slide as appended
+        pass
+
+
+def add_question_slides(presentation: Presentation, questions: list[InstructorQuestion]) -> None:
+    question_layout = presentation.slide_layouts[6] if len(presentation.slide_layouts) > 6 else presentation.slide_layouts[-1]
+    slide_width = presentation.slide_width
+    slide_height = presentation.slide_height
+    margin_x = Inches(0.8)
+    content_width = slide_width - (margin_x * 2)
+    teal = RGBColor(22, 119, 132)
+    deep_teal = RGBColor(8, 84, 97)
+    mint = RGBColor(222, 247, 235)
+    soft_bg = RGBColor(246, 249, 250)
+    white = RGBColor(255, 255, 255)
+    slate = RGBColor(71, 85, 105)
+    border = RGBColor(212, 226, 229)
+
+    for index, question in enumerate(questions, start=1):
+        slide = presentation.slides.add_slide(question_layout)
+        background = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, slide_width, slide_height)
+        style_shape(background, soft_bg)
+
+        header = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, margin_x, Inches(0.45), Inches(3.0), Inches(0.42))
+        style_shape(header, mint)
+        set_text_box(header, f"QUESTION {index}", size=12, color=deep_teal, bold=True, align=PP_ALIGN.CENTER)
+
+        meta = slide.shapes.add_textbox(slide_width - margin_x - Inches(3.2), Inches(0.45), Inches(3.2), Inches(0.42))
+        set_text_box(meta, f"{question.bloom_level} | {question.difficulty}", size=11, color=slate, bold=True, align=PP_ALIGN.RIGHT)
+
+        question_card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, margin_x, Inches(1.15), content_width, Inches(1.45))
+        style_shape(question_card, white, border)
+        set_text_box(question_card, question.question_text, size=24, color=RGBColor(15, 23, 42), bold=True)
+
+        options = question.options[:6]
+        if options:
+            columns = 2 if len(options) > 2 else 1
+            gap = Inches(0.22)
+            option_width = (content_width - (gap * (columns - 1))) // columns
+            option_height = Inches(0.78)
+            start_y = Inches(2.95)
+
+            for option_index, option in enumerate(options):
+                row = option_index // columns
+                column = option_index % columns
+                x = margin_x + (column * (option_width + gap))
+                y = start_y + (row * (option_height + gap))
+                option_card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, y, option_width, option_height)
+                style_shape(option_card, white, border)
+                letter = chr(65 + option_index)
+                set_text_box(option_card, f"{letter}. {option}", size=16, color=RGBColor(30, 41, 59), bold=True)
+        else:
+            response_card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, margin_x, Inches(3.05), content_width, Inches(1.05))
+            style_shape(response_card, white, border)
+            set_text_box(response_card, "Write your short answer", size=18, color=teal, bold=True, align=PP_ALIGN.CENTER)
+
+        footer = slide.shapes.add_textbox(margin_x, slide_height - Inches(0.65), content_width, Inches(0.28))
+        set_text_box(footer, "Discuss, answer, then reveal feedback in the live session.", size=11, color=slate, align=PP_ALIGN.CENTER)
+
+
+def create_question_deck(questions: list[InstructorQuestion], session_code: str | None = None) -> Presentation:
     presentation = Presentation()
     title_layout = presentation.slide_layouts[0]
     title_slide = presentation.slides.add_slide(title_layout)
-    title_slide.shapes.title.text = "Engagement Questions"
-    title_slide.placeholders[1].text = "Generated by AILA"
+    add_slide_title(title_slide, "Engagement Questions")
+    if len(title_slide.placeholders) > 1:
+        title_slide.placeholders[1].text = "Generated by AILA"
+    add_join_slide(presentation, session_code=session_code)
+    add_question_slides(presentation, questions)
+    return presentation
 
-    for index, question in enumerate(questions, start=1):
-        slide = presentation.slides.add_slide(presentation.slide_layouts[5])
-        slide.shapes.title.text = f"Engagement Question {index}"
-        box = slide.shapes.add_textbox(Inches(0.8), Inches(1.35), Inches(8.6), Inches(4.7))
-        frame = box.text_frame
-        frame.word_wrap = True
-        frame.paragraphs[0].text = question.question_text
-        frame.paragraphs[0].font.size = Pt(24)
-        frame.paragraphs[0].font.bold = True
 
-        for option in question.options:
-            paragraph = frame.add_paragraph()
-            paragraph.text = f"- {option}"
-            paragraph.font.size = Pt(18)
+def reconstruct_presentation(questions: list[InstructorQuestion], upload_id: str, upload: dict | None = None, session_code: str | None = None) -> tuple[str, Path]:
+    upload_path = get_upload_file_path(upload_id, upload.get("file_type") if upload else None)
+    original_filename = upload.get("filename") if upload else None
+    if upload_path and upload_path.suffix.lower() == ".pptx":
+        presentation = Presentation(upload_path)
+        filename_stem = Path(original_filename or upload_path.name).stem
+        filename = f"{filename_stem}_with_questions.pptx"
+        add_join_slide(presentation, session_code=session_code)
+    else:
+        presentation = create_question_deck(questions, session_code=session_code)
+        filename = f"smartclass_engagement_{upload_id}.pptx"
 
-        notes = frame.add_paragraph()
-        notes.text = f"Bloom: {question.bloom_level} | Difficulty: {question.difficulty}"
-        notes.font.size = Pt(14)
+    if upload_path and upload_path.suffix.lower() == ".pptx":
+        add_question_slides(presentation, questions)
 
     file_id = new_id("pptx")
-    filename = f"smartclass_engagement_{upload_id}.pptx"
     path = get_storage_root() / "presentations" / f"{file_id}.pptx"
     presentation.save(path)
     return filename, path

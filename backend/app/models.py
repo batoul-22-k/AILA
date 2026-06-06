@@ -53,7 +53,15 @@ class UserOut(BaseModel):
     user_id: str
     name: str
     email: str
-    global_role: Literal["user", "admin"] = "user"
+    account_role: Literal["student", "instructor", "admin"] = "student"
+    created_at: datetime | None = None
+
+
+class UserCreateRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+    account_role: Literal["student", "instructor", "admin"] = "student"
 
 
 class NotificationOut(BaseModel):
@@ -80,6 +88,9 @@ class WorkspaceOut(BaseModel):
     type: Literal["student", "instructor", "admin"]
     class_id: str | None = None
     class_name: str | None = None
+    instructor_name: str | None = None
+    joined_at: datetime | None = None
+    last_activity_at: datetime | None = None
     label: str | None = None
 
 
@@ -149,6 +160,7 @@ class RegenerateQuestionRequest(BaseModel):
 class ReconstructPresentationRequest(BaseModel):
     upload_id: str
     question_ids: list[str]
+    session_code: str | None = None
 
 
 class ReconstructPresentationOut(BaseModel):
@@ -162,10 +174,15 @@ class InstructorSessionCreateRequest(BaseModel):
     instructor_id: str
     class_id: str
     question_ids: list[str]
+    scheduled_for: datetime | None = None
 
 
 class InstructorSessionStatusUpdate(BaseModel):
-    status: Literal["active", "closed"]
+    status: Literal["scheduled", "active", "closed"]
+
+
+class ActiveQuestionUpdate(BaseModel):
+    question_id: str
 
 
 class InstructorSessionOut(BaseModel):
@@ -173,10 +190,12 @@ class InstructorSessionOut(BaseModel):
     class_id: str
     instructor_id: str
     question_ids: list[str]
+    active_question_id: str | None = None
     session_code: str
     join_link: str
     qr_code_base64: str
-    status: Literal["active", "closed"]
+    status: Literal["scheduled", "active", "closed"]
+    scheduled_for: datetime | None = None
     created_at: datetime
 
 
@@ -211,9 +230,19 @@ class SessionOut(BaseModel):
     class_id: str
     instructor_id: str
     question_ids: list[str]
+    active_question_id: str | None = None
     session_code: str
     status: Literal["active", "closed"]
     created_at: datetime
+
+
+class LiveQuestionOut(BaseModel):
+    question_id: str
+    type: Literal["mcq", "short_answer"]
+    question_text: str
+    options: list[str] = Field(default_factory=list)
+    bloom_level: str | None = None
+    difficulty: str | None = None
 
 
 class JoinSessionRequest(BaseModel):

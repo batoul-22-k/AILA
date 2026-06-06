@@ -17,6 +17,7 @@ from app.instructor_services import (
     save_upload_file,
 )
 from app.models import (
+    ActiveQuestionUpdate,
     GenerateQuestionsRequest,
     InstructorQuestion,
     InstructorSessionCreateRequest,
@@ -30,7 +31,8 @@ from app.models import (
     new_id,
     utc_now,
 )
-from app.services import serialize_document
+from app.realtime import manager
+from app.services import get_live_session_stats, serialize_document
 
 router = APIRouter(prefix="/instructor", tags=["instructor"])
 
@@ -287,10 +289,11 @@ async def reconstruct_instructor_presentation(
     else:
         await require_any_class_role(db, user, "instructor")
     rows = await db[MongoCollections.approved_questions].find({"question_id": {"$in": payload.question_ids}}).to_list(length=100)
-    questions = [InstructorQuestion(**serialize_document(row)) for row in rows]
+    questions_by_id = {row["question_id"]: InstructorQuestion(**serialize_document(row)) for row in rows}
+    questions = [questions_by_id[question_id] for question_id in payload.question_ids if question_id in questions_by_id]
     if not questions:
         raise HTTPException(status_code=400, detail="Approve at least one question before reconstructing a presentation.")
-    filename, path = reconstruct_presentation(questions, payload.upload_id)
+    filename, path = reconstruct_presentation(questions, payload.upload_id, upload, payload.session_code)
     file_id = path.stem
     await db["reconstructed_presentations"].insert_one(
         {
@@ -344,15 +347,19 @@ async def create_instructor_session(
         raise HTTPException(status_code=400, detail="Create a session from at least one approved question.")
     session_code = make_session_code()
     join_link = make_join_link(session_code)
+    scheduled_for = payload.scheduled_for
+    status = "scheduled" if scheduled_for and scheduled_for > utc_now() else "active"
     session = InstructorSessionOut(
         session_id=new_id("session"),
         class_id=payload.class_id,
         instructor_id=user["user_id"],
         question_ids=payload.question_ids,
+        active_question_id=payload.question_ids[0] if payload.question_ids else None,
         session_code=session_code,
         join_link=join_link,
         qr_code_base64=make_qr_base64(join_link),
-        status="active",
+        status=status,
+        scheduled_for=scheduled_for,
         created_at=utc_now(),
     )
     await db[MongoCollections.sessions].insert_one(session.model_dump())
@@ -384,6 +391,7 @@ async def get_instructor_session(
         join_link = make_join_link(clean["session_code"])
         clean["join_link"] = join_link
         clean["qr_code_base64"] = make_qr_base64(join_link)
+    clean.setdefault("active_question_id", clean.get("question_ids", [None])[0] if clean.get("question_ids") else None)
     return InstructorSessionOut(**clean)
 
 
@@ -412,4 +420,38 @@ async def update_instructor_session_status(
         join_link = make_join_link(clean["session_code"])
         clean["join_link"] = join_link
         clean["qr_code_base64"] = make_qr_base64(join_link)
+    clean.setdefault("active_question_id", clean.get("question_ids", [None])[0] if clean.get("question_ids") else None)
+    return InstructorSessionOut(**clean)
+
+
+@router.patch("/sessions/{session_id}/active-question", response_model=InstructorSessionOut)
+async def update_instructor_active_question(
+    session_id: str,
+    payload: ActiveQuestionUpdate,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: dict = Depends(get_current_user),
+) -> InstructorSessionOut:
+    row = await db[MongoCollections.sessions].find_one({"session_id": session_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await require_class_role(db, user, row["class_id"], "instructor")
+    if payload.question_id not in row.get("question_ids", []):
+        raise HTTPException(status_code=400, detail="Question is not part of this session")
+
+    await db[MongoCollections.sessions].update_one(
+        {"session_id": session_id},
+        {"$set": {"active_question_id": payload.question_id, "updated_at": utc_now()}},
+    )
+    refreshed = await db[MongoCollections.sessions].find_one({"session_id": session_id})
+    clean = serialize_document(refreshed)
+    if "qr_code_base64" not in clean:
+        join_link = make_join_link(clean["session_code"])
+        clean["join_link"] = join_link
+        clean["qr_code_base64"] = make_qr_base64(join_link)
+
+    stats = await get_live_session_stats(db, session_id)
+    await manager.broadcast(
+        session_id,
+        {"type": "active_question", "payload": {"question_id": payload.question_id, "stats": stats.model_dump(mode="json")}},
+    )
     return InstructorSessionOut(**clean)
