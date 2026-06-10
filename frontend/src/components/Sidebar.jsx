@@ -1,4 +1,4 @@
-import { CheckCircle2, Circle, Sparkles } from "lucide-react";
+import { AlertTriangle, BarChart3, CheckCircle2, Circle, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
@@ -26,6 +26,7 @@ export function Sidebar({ role }) {
   const [studioStage, setStudioStage] = useState(getStoredStudioStage);
   const showClassSubnav = role === "instructor" && location.pathname.startsWith("/instructor/classes");
   const showStudioSubnav = role === "instructor" && location.pathname.startsWith("/instructor/content-studio");
+  const showAnalyticsSubnav = role === "instructor" && (location.pathname.startsWith("/instructor/analytics") || location.pathname.startsWith("/instructor/at-risk"));
   const activeStageIndex = Math.max(0, studioSteps.findIndex((step) => step.id === studioStage));
 
   async function loadInstructorClasses() {
@@ -86,6 +87,7 @@ export function Sidebar({ role }) {
         <nav className="subtle-scroll mt-6 grid gap-1.5 overflow-y-auto">
           {navigation[role].map((item) => {
             const ItemIcon = item.icon;
+            const forceActive = item.to === "/instructor/analytics" && location.pathname.startsWith("/instructor/at-risk");
             return (
               <div key={item.to}>
                 <NavLink
@@ -94,7 +96,7 @@ export function Sidebar({ role }) {
                   className={({ isActive }) =>
                     cn(
                       "group flex items-center gap-3 rounded-full px-3 py-3 text-sm font-bold transition-all duration-300",
-                      isActive
+                      isActive || forceActive
                         ? palette.active
                         : "text-slate-600 hover:bg-role-hover hover:text-role-text dark:text-slate-300 dark:hover:bg-slate-900 dark:hover:text-white",
                     )
@@ -148,6 +150,41 @@ export function Sidebar({ role }) {
                         </div>
                       );
                     })}
+                  </div>
+                )}
+
+                {item.to === "/instructor/analytics" && showAnalyticsSubnav && (
+                  <div className="ml-3 mt-2 grid gap-1.5 border-l border-role-border pl-3">
+                    <NavLink
+                      to="/instructor/analytics"
+                      end
+                      className={({ isActive }) =>
+                        cn(
+                          "focus-ring flex min-h-9 items-center gap-2 rounded-full border px-3 py-2 text-xs font-black transition",
+                          isActive
+                            ? "border-role-primary bg-role-hover text-role-primary shadow-sm"
+                            : "border-transparent text-slate-500 hover:bg-role-hover hover:text-role-primary dark:text-slate-300",
+                        )
+                      }
+                    >
+                      <BarChart3 size={14} />
+                      <span className="truncate">Overview</span>
+                    </NavLink>
+                    <NavLink
+                      to="/instructor/at-risk"
+                      end
+                      className={({ isActive }) =>
+                        cn(
+                          "focus-ring flex min-h-9 items-center gap-2 rounded-full border px-3 py-2 text-xs font-black transition",
+                          isActive
+                            ? "border-role-primary bg-role-hover text-role-primary shadow-sm"
+                            : "border-transparent text-slate-500 hover:bg-role-hover hover:text-role-primary dark:text-slate-300",
+                        )
+                      }
+                    >
+                      <AlertTriangle size={14} />
+                      <span className="truncate">At-Risk Students</span>
+                    </NavLink>
                   </div>
                 )}
               </div>

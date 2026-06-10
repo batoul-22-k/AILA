@@ -318,10 +318,16 @@ export function updateInstructorSessionStatus(sessionId, status) {
   });
 }
 
-export function updateInstructorActiveQuestion(sessionId, questionId) {
+export function deleteInstructorSession(sessionId) {
+  return request(`/api/instructor/sessions/${sessionId}`, {
+    method: "DELETE",
+  });
+}
+
+export function updateInstructorActiveQuestion(sessionId, questionId, durationSeconds) {
   return request(`/api/instructor/sessions/${sessionId}/active-question`, {
     method: "PATCH",
-    body: JSON.stringify({ question_id: questionId }),
+    body: JSON.stringify({ question_id: questionId, duration_seconds: durationSeconds }),
   });
 }
 
@@ -355,6 +361,57 @@ export function submitAnswer(payload) {
 
 export function getLiveSessionStats(sessionId) {
   return request(`/api/sessions/${sessionId}/stats`);
+}
+
+export function getLiveSessionResponseDetails(sessionId, params = {}) {
+  const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== "")).toString();
+  return request(`/api/sessions/${sessionId}/responses${query ? `?${query}` : ""}`);
+}
+
+export function revealSessionQuestion(sessionId, questionId) {
+  return request(`/api/sessions/${sessionId}/questions/${questionId}/reveal`, {
+    method: "POST",
+  });
+}
+
+export function finishLiveSession(sessionId) {
+  return request(`/api/sessions/${sessionId}/finish`, {
+    method: "POST",
+  });
+}
+
+export function getLiveSession(sessionId) {
+  return request(`/api/sessions/${sessionId}`);
+}
+
+export function getStudentAnalytics(studentId) {
+  return request(`/api/analytics/student/${studentId}`);
+}
+
+export function getMyProgress(params = {}) {
+  const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== "")).toString();
+  return request(`/api/progress/me${query ? `?${query}` : ""}`);
+}
+
+export function getClassAnalytics(classId) {
+  return request(`/api/analytics/class/${classId}`);
+}
+
+export function recalculateClassAnalytics(classId) {
+  return request(`/api/analytics/recalculate/${classId}`, {
+    method: "POST",
+  });
+}
+
+export function getAtRiskStudents(params = {}) {
+  const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== "")).toString();
+  return request(`/api/analytics/at-risk-students${query ? `?${query}` : ""}`);
+}
+
+export function recalculateClassPredictions(classId) {
+  return request(`/api/analytics/predictions/recalculate/${classId}`, {
+    method: "POST",
+  });
 }
 
 export function getLiveSessionQuestions(sessionId) {

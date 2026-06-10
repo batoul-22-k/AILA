@@ -7,10 +7,8 @@ import {
   FileText,
   Gauge,
   GraduationCap,
-  Home,
   LineChart,
   Radio,
-  Settings,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -118,7 +116,7 @@ export function getRoleThemeScope(role) {
 export const roleMeta = {
   student: {
     label: "Student",
-    name: "Maya Student",
+    name: "Student",
     workspace: "Student Space",
     palette: rolePalettes.student,
     tone: "emerald",
@@ -127,7 +125,7 @@ export const roleMeta = {
   },
   instructor: {
     label: "Instructor",
-    name: "Dr. Instructor",
+    name: "Instructor",
     workspace: "Instructor Workspace",
     palette: rolePalettes.instructor,
     tone: "slate",
@@ -136,7 +134,7 @@ export const roleMeta = {
   },
   admin: {
     label: "Administrator",
-    name: "Admin Office",
+    name: "Administrator",
     workspace: "Executive Console",
     palette: rolePalettes.admin,
     tone: "orange",
@@ -147,11 +145,10 @@ export const roleMeta = {
 
 export const navigation = {
   student: [
-    { to: "/student", label: "Dashboard", icon: Home, end: true },
-    { to: "/student/join", label: "Join", icon: Radio },
-    { to: "/student/session", label: "Session", icon: BrainCircuit },
-    { to: "/student/progress", label: "Progress", icon: BarChart3 },
-    { to: "/student/settings/appearance", label: "Settings", icon: Settings },
+    { to: "/student", label: "Dashboard", icon: Gauge, end: true },
+    { to: "/student/join", label: "Join Session", icon: Radio },
+    { to: "/student/session", label: "Live Class", icon: BrainCircuit },
+    { to: "/student/progress", label: "Analytics", icon: BarChart3 },
   ],
   instructor: [
     { to: "/instructor", label: "Dashboard", icon: Gauge, end: true },
@@ -160,7 +157,6 @@ export const navigation = {
     { to: "/instructor/sessions", label: "Sessions", icon: Radio },
     { to: "/instructor/live", label: "Live Class", icon: Activity },
     { to: "/instructor/analytics", label: "Analytics", icon: LineChart },
-    { to: "/instructor/settings/appearance", label: "Settings", icon: Settings },
   ],
   admin: [
     { to: "/admin", label: "Dashboard", icon: Gauge, end: true },
@@ -169,6 +165,5 @@ export const navigation = {
     { to: "/admin/instructors", label: "Instructors", icon: Users },
     { to: "/admin/students", label: "Students", icon: Activity },
     { to: "/admin/reports", label: "Reports", icon: FileText },
-    { to: "/admin/settings/appearance", label: "Settings", icon: Settings },
   ],
 };

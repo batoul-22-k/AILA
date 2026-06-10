@@ -56,6 +56,8 @@ export function AdminAccountsPage() {
   }, [showToast]);
 
   const adminCount = users.filter((user) => user.account_role === "admin").length;
+  const instructorCount = users.filter((user) => user.account_role === "instructor").length;
+  const studentCount = users.filter((user) => user.account_role === "student").length;
   const standardCount = users.length - adminCount;
 
   function patchForm(patch) {
@@ -109,9 +111,50 @@ export function AdminAccountsPage() {
       <PageHeader eyebrow="Account management" description="Create student, instructor, and admin identities. Class access is assigned from class management." tone="role" />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Total accounts" value={users.length} icon={Users} tone="role" />
-        <StatCard label="Standard users" value={standardCount} icon={GraduationCap} tone="emerald" />
-        <StatCard label="Admins" value={adminCount} icon={ShieldCheck} tone="gold" />
+        <StatCard
+          label="Total accounts"
+          value={users.length}
+          icon={Users}
+          tone="role"
+          detailPanel={{
+            title: "Account details",
+            description: "All identities currently available in AILA.",
+            items: [
+              { label: "Students", value: studentCount },
+              { label: "Instructors", value: instructorCount },
+              { label: "Admins", value: adminCount },
+            ],
+          }}
+        />
+        <StatCard
+          label="Standard users"
+          value={standardCount}
+          icon={GraduationCap}
+          tone="emerald"
+          detailPanel={{
+            title: "Standard user details",
+            description: "Non-admin teaching and learning accounts.",
+            items: [
+              { label: "Students", value: studentCount },
+              { label: "Instructors", value: instructorCount },
+              { label: "Standard total", value: standardCount },
+            ],
+          }}
+        />
+        <StatCard
+          label="Admins"
+          value={adminCount}
+          icon={ShieldCheck}
+          tone="gold"
+          detailPanel={{
+            title: "Admin details",
+            description: "Accounts with institution administration access.",
+            items: [
+              { label: "Admins", value: adminCount },
+              { label: "Total accounts", value: users.length },
+            ],
+          }}
+        />
       </div>
 
       <div className="grid gap-4 xl:grid-rows-[0.5fr_1.5fr]">

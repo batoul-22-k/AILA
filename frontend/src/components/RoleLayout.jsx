@@ -6,7 +6,6 @@ import { useAppAppearance } from "../state/InstructorAppearanceContext";
 import { cn } from "../utils/cn";
 import { AppLayout } from "./AppLayout";
 import { AilaIcon, AilaLogo } from "./AilaLogo";
-import { MobileBottomNav } from "./MobileBottomNav";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 
@@ -32,9 +31,9 @@ export function RoleLayout({ role }) {
       <div className="role-shell flex">
         <Sidebar role={role} />
 
-        <div className="min-w-0 flex-1 pb-24 lg:pb-0">
+        <div className="min-w-0 flex-1">
           <Topbar role={role} onMenuClick={() => setDrawerOpen(true)} />
-          {role !== "student" && appAppearance.layout === "top-navigation" && (
+          {appAppearance.layout === "top-navigation" && (
             <nav className="role-topnav hidden border-b border-[var(--role-border)] bg-[var(--role-surface)]/80 px-8 py-3 lg:flex">
               <div className="mx-auto flex w-full max-w-[88rem] items-center gap-1">
                 {navigation[role].map((item) => {
@@ -107,7 +106,6 @@ export function RoleLayout({ role }) {
         </div>
       )}
 
-      {role === "student" && <MobileBottomNav role={role} />}
     </AppLayout>
   );
 }

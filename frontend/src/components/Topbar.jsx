@@ -115,6 +115,12 @@ export function Topbar({ role, onMenuClick }) {
     navigate("/student");
   }
 
+  function openAppearanceSettings() {
+    setAccountOpen(false);
+    setNotificationsOpen(false);
+    navigate(`/${role}/settings/appearance`);
+  }
+
   return (
     <header className="role-topbar sticky top-0 z-30 border-b backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/90">
       <div className="flex min-h-16 items-center justify-between gap-3 px-3 sm:px-5 lg:px-8">
@@ -168,6 +174,9 @@ export function Topbar({ role, onMenuClick }) {
 
         <div className="flex items-center gap-2">
           <ThemeToggle />
+          <Button variant="ghost" size="sm" type="button" aria-label="Appearance settings" title="Appearance settings" onClick={openAppearanceSettings}>
+            <Settings size={17} />
+          </Button>
           <div ref={notificationsRef} className="relative">
             <Button variant="ghost" size="sm" type="button" aria-label="Notifications" onClick={handleNotificationsToggle}>
               <span className="relative">
@@ -264,18 +273,6 @@ export function Topbar({ role, onMenuClick }) {
                 >
                   <UserRound size={17} />
                   Edit profile
-                </button>
-                <button
-                  className="flex w-full items-center gap-3 rounded-[var(--role-radius)] px-3 py-2.5 text-left text-sm font-bold text-slate-700 hover:bg-role-hover dark:text-slate-200"
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setAccountOpen(false);
-                    navigate(`/${role}/settings/appearance`);
-                  }}
-                >
-                  <Settings size={17} />
-                  Appearance
                 </button>
                 <button
                   className="mt-2 flex w-full items-center gap-3 rounded-[var(--role-radius)] border-t border-[var(--color-border)] px-3 py-2.5 text-left text-sm font-bold text-red-600 hover:bg-red-50 dark:border-slate-800 dark:text-red-200 dark:hover:bg-red-400/10"

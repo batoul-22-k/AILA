@@ -8,7 +8,7 @@ import { PageHeader } from "../../components/PageHeader";
 
 export function SessionCodePage() {
   const session = JSON.parse(localStorage.getItem("instructorSession") ?? "null");
-  const code = session?.session_code ?? "------";
+  const code = session?.session_code ?? "";
 
   return (
     <div className="page-grid">
@@ -18,12 +18,18 @@ export function SessionCodePage() {
           <QrCode size={54} />
         </span>
         <Badge className="mt-5" tone="green">Active session</Badge>
-        <p className="mt-5 rounded-lg bg-slate-950 px-6 py-7 text-5xl font-black tracking-[0.25em] text-white shadow-lift sm:text-7xl">
-          {code}
-        </p>
+        {code ? (
+          <p className="mt-5 rounded-lg bg-slate-950 px-6 py-7 text-5xl font-black tracking-[0.25em] text-white shadow-lift sm:text-7xl">
+            {code}
+          </p>
+        ) : (
+          <p className="mt-5 rounded-lg border border-dashed border-role-border bg-role-hover px-6 py-7 text-lg font-black text-slate-600 dark:text-slate-300">
+            Create a session first
+          </p>
+        )}
         <p className="mt-4 break-all text-sm font-semibold text-slate-500 dark:text-slate-400">Session ID: {session?.session_id ?? "Create a session first"}</p>
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-center">
-          <Button type="button" variant="outline" onClick={() => navigator.clipboard?.writeText(code)}>
+          <Button type="button" variant="outline" disabled={!code} onClick={() => navigator.clipboard?.writeText(code)}>
             <Copy size={17} />
             Copy code
           </Button>

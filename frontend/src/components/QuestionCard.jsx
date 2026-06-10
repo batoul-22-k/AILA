@@ -5,8 +5,25 @@ import { Button } from "./Button";
 import { DashboardCard } from "./DashboardCard";
 import { cn } from "../utils/cn";
 
-export function QuestionCard({ title, subtitle, prompt, options = [], type = "MCQ", status = "AI Draft", onSelect, selected, showActions = status !== "Live" }) {
-  const statusTone = status === "Approved" ? "green" : status === "Live" ? "teal" : status === "Scheduled" ? "gold" : "violet";
+function normalizeAnswer(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+export function QuestionCard({
+  title,
+  subtitle,
+  prompt,
+  options = [],
+  type = "MCQ",
+  status = "AI Draft",
+  onSelect,
+  selected,
+  showActions = status !== "Live",
+  disabled = false,
+  correctAnswer = "",
+  revealed = false,
+}) {
+  const statusTone = status === "Approved" || status === "Submitted" || status === "Revealed" ? "green" : status === "Live" ? "teal" : status === "Scheduled" ? "gold" : "violet";
 
   return (
     <DashboardCard className="overflow-hidden bg-white p-0 dark:bg-slate-900" interactive>
@@ -33,27 +50,44 @@ export function QuestionCard({ title, subtitle, prompt, options = [], type = "MC
             {options.map((option, index) => {
               const active = selected === option;
               const label = String.fromCharCode(65 + index);
+              const normalizedCorrect = normalizeAnswer(correctAnswer);
+              const isCorrect = revealed && normalizedCorrect && [normalizeAnswer(option), normalizeAnswer(label)].includes(normalizedCorrect);
+              const isWrongSelection = revealed && active && normalizedCorrect && !isCorrect;
               return (
                 <button
                   key={`${option}-${index}`}
                   type="button"
+                  disabled={disabled}
                   onClick={() => onSelect?.(option)}
                   className={cn(
-                    "focus-ring flex min-h-16 items-start gap-3 rounded-[20px] border px-4 py-3 text-left text-sm font-bold transition",
-                    active
+                    "focus-ring flex min-h-16 items-start gap-3 rounded-[20px] border px-4 py-3 text-left text-sm font-bold transition disabled:cursor-not-allowed",
+                    isCorrect
                       ? "border-emerald-300 bg-emerald-50 text-emerald-900 shadow-sm dark:border-emerald-400/40 dark:bg-emerald-500/15 dark:text-emerald-100"
-                      : "border-role-border bg-role-hover text-slate-700 hover:border-role-primary hover:bg-white dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900",
+                      : isWrongSelection
+                        ? "border-amber-300 bg-amber-50 text-amber-900 shadow-sm dark:border-amber-400/40 dark:bg-amber-500/15 dark:text-amber-100"
+                        : active
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-900 shadow-sm dark:border-emerald-400/40 dark:bg-emerald-500/15 dark:text-emerald-100"
+                      : "border-role-border bg-role-hover text-slate-700 hover:border-role-primary hover:bg-white disabled:hover:border-role-border disabled:hover:bg-role-hover dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900 dark:disabled:hover:bg-slate-950",
                   )}
                 >
                   <span
                     className={cn(
                       "grid h-8 w-8 shrink-0 place-items-center rounded-full text-xs font-black",
-                      active ? "bg-emerald-600 text-white" : "bg-white text-role-primary dark:bg-slate-900",
+                      isCorrect
+                        ? "bg-emerald-600 text-white"
+                        : isWrongSelection
+                          ? "bg-amber-500 text-white"
+                          : active
+                            ? "bg-emerald-600 text-white"
+                            : "bg-white text-role-primary dark:bg-slate-900",
                     )}
                   >
                     {label}
                   </span>
-                  <span className="leading-6">{option}</span>
+                  <span className="leading-6">
+                    {option}
+                    {isCorrect && <span className="ml-2 text-xs font-black uppercase text-emerald-700 dark:text-emerald-100">Correct</span>}
+                  </span>
                 </button>
               );
             })}

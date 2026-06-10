@@ -14,6 +14,7 @@ class MongoCollections:
     approved_questions = "approved_questions"
     sessions = "sessions"
     responses = "responses"
+    student_rewards = "student_rewards"
     participation_records = "participation_records"
     analytics_results = "analytics_results"
     prediction_results = "prediction_results"

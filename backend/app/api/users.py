@@ -129,9 +129,3 @@ async def delete_user(
     await db[MongoCollections.participation_records].delete_many({"student_id": user_id})
     await db[MongoCollections.notifications].delete_many({"user_id": user_id})
     return {"status": "deleted", "user_id": user_id}
-
-
-@router.get("/mock-current")
-async def get_mock_current_user(role: str = "student") -> dict:
-    # TODO: Replace mock users with real authentication and role claims.
-    return {"user_id": f"mock_{role}_001", "role": role}

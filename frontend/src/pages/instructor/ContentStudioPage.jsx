@@ -431,8 +431,54 @@ function isQuestionApproved(question, savedQuestions) {
   return savedQuestions.some((item) => item.question_id === question.question_id);
 }
 
+const answerLeakStopWords = new Set([
+  "answer",
+  "apply",
+  "could",
+  "describe",
+  "does",
+  "example",
+  "guide",
+  "instructor",
+  "lecture",
+  "next",
+  "question",
+  "sentence",
+  "short",
+  "slide",
+  "student",
+  "words",
+]);
+
+function contentTerms(text) {
+  return String(text || "")
+    .toLowerCase()
+    .match(/[a-z0-9]+/g)
+    ?.filter((term) => term.length > 2 && !answerLeakStopWords.has(term)) || [];
+}
+
+function answerLeaksIntoQuestion(question) {
+  if (question?.type !== "short_answer") return false;
+  const questionText = String(question.question_text || "").replace(/\s+/g, " ").trim().toLowerCase();
+  const answer = String(question.correct_answer || "").replace(/\s+/g, " ").trim().toLowerCase();
+  if (!questionText || !answer) return false;
+  const answerWords = answer.split(/\s+/);
+  if (answer.length >= 18 && questionText.includes(answer)) return true;
+  if (answerWords.length >= 4) {
+    for (let index = 0; index <= answerWords.length - 4; index += 1) {
+      if (questionText.includes(answerWords.slice(index, index + 4).join(" "))) return true;
+    }
+  }
+  const answerTerms = new Set(contentTerms(answer));
+  if (answerTerms.size < 3) return false;
+  const questionTerms = new Set(contentTerms(questionText));
+  const overlap = [...answerTerms].filter((term) => questionTerms.has(term)).length / answerTerms.size;
+  return overlap >= 0.75;
+}
+
 function getQuestionReviewStatus(question, savedQuestions) {
   if (isQuestionApproved(question, savedQuestions)) return "approved";
+  if (answerLeaksIntoQuestion(question)) return "needs edit";
   if (!question.correct_answer || !question.explanation) return "needs edit";
   return "pending";
 }
@@ -473,6 +519,7 @@ function QuestionReviewCard({
 }) {
   if (!question) return null;
   const isMcq = question.type === "mcq";
+  const hasAnswerLeak = answerLeaksIntoQuestion(question);
   const confidence = getQuestionConfidence(question, index);
   const statusTone = status === "approved" ? "green" : status === "needs edit" ? "gold" : "slate";
 
@@ -503,6 +550,11 @@ function QuestionReviewCard({
           </label>
         ) : (
           <h3 className="text-lg font-black leading-8 text-role-text dark:text-white">{question.question_text}</h3>
+        )}
+        {hasAnswerLeak && (
+          <div className="mt-3 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-100">
+            The suggested answer appears inside the question. Edit the question or regenerate it before approval.
+          </div>
         )}
       </div>
 
@@ -560,7 +612,7 @@ function QuestionReviewCard({
       </div>
 
       <div className="flex flex-col gap-2 border-t border-role-border pt-5 dark:border-slate-800 sm:flex-row">
-        <Button type="button" variant="success" onClick={() => onApprove(question)} loading={approving} disabled={busy || status === "approved"}>
+        <Button type="button" variant="success" onClick={() => onApprove(question)} loading={approving} disabled={busy || status === "approved" || hasAnswerLeak}>
           <Check size={17} />
           {status === "approved" ? "Approved" : "Approve"}
         </Button>
@@ -1387,6 +1439,10 @@ export function ContentStudioPage() {
 
   async function handleApproveQuestion(question) {
     if (!question || savedQuestions.some((item) => item.question_id === question.question_id)) return;
+    if (answerLeaksIntoQuestion(question)) {
+      notifyError(new Error("The suggested answer appears inside the question. Edit or regenerate it before approval."), "Could not approve question");
+      return;
+    }
     setIsApproving(true);
     setError("");
     try {
@@ -1407,7 +1463,13 @@ export function ContentStudioPage() {
   }
 
   async function handleApproveAllQuestions() {
-    const pending = generatedQuestions.filter((question) => !savedQuestions.some((item) => item.question_id === question.question_id));
+    const unapproved = generatedQuestions.filter((question) => !savedQuestions.some((item) => item.question_id === question.question_id));
+    const blocked = unapproved.filter((question) => getQuestionReviewStatus(question, savedQuestions) === "needs edit");
+    const pending = unapproved.filter((question) => getQuestionReviewStatus(question, savedQuestions) === "pending");
+    if (pending.length === 0 && blocked.length > 0) {
+      notifyError(new Error("Some questions need editing or regeneration before approval."), "Could not approve all questions");
+      return;
+    }
     if (pending.length === 0) return;
     setIsApproving(true);
     setError("");

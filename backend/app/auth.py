@@ -7,7 +7,7 @@ from app.database import MongoCollections, get_db
 from app.models import UserOut, WorkspaceOut
 from app.services import serialize_document
 
-SESSION_PREFIX = "mock-session:"
+SESSION_PREFIX = "aila-session:"
 
 
 def account_role_for_user(user: dict) -> str:

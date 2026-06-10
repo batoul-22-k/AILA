@@ -1,4 +1,4 @@
-import { LogIn, QrCode, Smartphone } from "lucide-react";
+import { LogIn, QrCode, Radio } from "lucide-react";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -37,21 +37,27 @@ export function JoinSessionPage() {
 
   return (
     <div className="page-grid">
-      <PageHeader eyebrow="Join live class" title="Enter your session code" description="Large, simple controls for fast classroom entry on any device." tone="emerald" />
+      <PageHeader eyebrow="Live class" title="Enter session code" description="Join the active session shared by your instructor." tone="role" />
       <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
-        <DashboardCard className="bg-gradient-to-br from-emerald-500 to-teal-500 text-white">
-          <Smartphone size={42} className="animate-float" />
-          <h2 className="mt-6 text-3xl font-black">Fast join for live participation</h2>
-          <p className="mt-3 text-sm leading-7 text-white/85">Ask your instructor for the code on the classroom screen or QR display.</p>
-          <div className="mt-6 flex items-center gap-3 rounded-lg bg-white/15 p-3 text-sm font-bold">
+        <DashboardCard>
+          <div className="flex items-center gap-3">
+            <span className="grid h-12 w-12 place-items-center rounded-full bg-role-soft text-role-primary">
+              <Radio size={22} />
+            </span>
+            <div>
+              <h2 className="text-lg font-black text-slate-950 dark:text-white">Session access</h2>
+              <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">Use the code shared by your instructor to enter the active class session.</p>
+            </div>
+          </div>
+          <div className="mt-6 flex items-center gap-3 rounded-lg bg-role-hover p-4 text-sm font-bold text-slate-600 dark:bg-slate-950 dark:text-slate-300">
             <QrCode size={20} />
-            Codes can be typed or scanned in class.
+            Codes can be typed here or opened from a shared QR link.
           </div>
         </DashboardCard>
 
         <DashboardCard>
           <form className="grid gap-4" onSubmit={handleSubmit}>
-            <Input label="Session code" value={sessionCode} onChange={(event) => setSessionCode(event.target.value.toUpperCase())} placeholder="ABC123" required className="h-14 text-center text-xl font-black tracking-[0.2em]" />
+            <Input label="Session code" value={sessionCode} onChange={(event) => setSessionCode(event.target.value.toUpperCase())} placeholder="Enter code" required className="h-14 text-center text-xl font-black tracking-[0.2em]" />
             <Button type="submit" size="lg" variant="success" loading={loading}>
               <LogIn size={18} />
               Join now
@@ -59,7 +65,7 @@ export function JoinSessionPage() {
           </form>
         </DashboardCard>
       </div>
-      <EmptyState title="No code yet?" description="Your instructor can create a live session and share a QR or session code from their dashboard." />
+      <EmptyState title="No active code" description="Your instructor can create a live session and share a QR or session code from the live dashboard." />
     </div>
   );
 }

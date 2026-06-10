@@ -17,8 +17,8 @@ export function LoginPage() {
   const navigate = useNavigate();
   const { login } = useAuth();
   const { selectWorkspace, clearWorkspace } = useCurrentWorkspace();
-  const [email, setEmail] = useState("batoul@example.com");
-  const [password, setPassword] = useState("demo-password");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(event) {
@@ -77,11 +77,6 @@ export function LoginPage() {
                   Log in
                 </Button>
               </form>
-
-              <div className="mt-5 rounded-[var(--role-radius)] bg-role-hover p-4 text-xs font-semibold leading-6 text-slate-600 dark:text-slate-300">
-                Demo accounts use password <span className="font-black">demo-password</span>: student@example.com, instructor@example.com,
-                admin@example.com, batoul@example.com.
-              </div>
             </DashboardCard>
           </div>
         </div>

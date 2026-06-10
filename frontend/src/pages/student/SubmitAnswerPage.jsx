@@ -10,15 +10,16 @@ import { PageHeader } from "../../components/PageHeader";
 import { useToast } from "../../components/ToastProvider";
 
 function getAnswerKey(sessionId, questionId) {
-  return `selectedAnswer:${sessionId || "demo"}:${questionId || "question_demo"}`;
+  return `selectedAnswer:${sessionId || "no-session"}:${questionId || "no-question"}`;
 }
 
 function getActiveQuestionId(session) {
   const questionIds = session?.question_ids ?? [];
-  if (session?.active_question_id && questionIds.includes(session.active_question_id)) return session.active_question_id;
   const scopedQuestionId = session?.session_id ? localStorage.getItem(`activeQuestionId:${session.session_id}`) : null;
   const storedQuestionId = scopedQuestionId || localStorage.getItem("activeQuestionId");
-  return questionIds.includes(storedQuestionId) ? storedQuestionId : questionIds[0] ?? "question_demo";
+  if (questionIds.includes(storedQuestionId)) return storedQuestionId;
+  if (session?.active_question_id && questionIds.includes(session.active_question_id)) return session.active_question_id;
+  return questionIds[0] ?? "";
 }
 
 function getStoredAnswer(sessionId, questionId) {
@@ -32,8 +33,7 @@ export function SubmitAnswerPage() {
   const questionId = getActiveQuestionId(session);
   const [questions, setQuestions] = useState([]);
   const activeQuestion = questions.find((question) => question.question_id === questionId);
-  const hasOptions = (activeQuestion?.options?.length ?? 0) > 0;
-  const [mode, setMode] = useState(() => (getStoredAnswer(session?.session_id, questionId) ? "mcq" : "short"));
+  const isMcq = activeQuestion ? (activeQuestion.type ? activeQuestion.type === "mcq" : (activeQuestion.options?.length ?? 0) > 0) : true;
   const [answer, setAnswer] = useState(() => getStoredAnswer(session?.session_id, questionId));
   const [loading, setLoading] = useState(false);
 
@@ -54,8 +54,7 @@ export function SubmitAnswerPage() {
   useEffect(() => {
     const storedAnswer = getStoredAnswer(session?.session_id, questionId);
     setAnswer(storedAnswer);
-    setMode(hasOptions ? "mcq" : "short");
-  }, [hasOptions, questionId, session?.session_id]);
+  }, [questionId, session?.session_id]);
 
   function updateAnswer(nextAnswer) {
     setAnswer(nextAnswer);
@@ -91,39 +90,19 @@ export function SubmitAnswerPage() {
 
   return (
     <div className="page-grid">
-      <PageHeader eyebrow="Answer" title="Submit your response" description="Review the active prompt, then send one answer for this question." tone="emerald" />
+      <PageHeader eyebrow="Live class" title="Submit response" description="Review the active prompt, then send one answer for this question." tone="role" />
       <DashboardCard>
         <form className="grid gap-5" onSubmit={handleSubmit}>
           <div>
-            <Badge tone="teal">{hasOptions ? "MCQ" : "Short answer"}</Badge>
+            <Badge tone="role">{isMcq ? "MCQ" : "Short answer"}</Badge>
             <h2 className="mt-3 text-xl font-black text-slate-950 dark:text-white">
               {activeQuestion?.question_text || "Loading active question..."}
             </h2>
           </div>
 
-          {hasOptions && (
-            <div className="inline-grid grid-cols-2 gap-2 rounded-lg bg-slate-100 p-1 dark:bg-slate-950 sm:w-fit">
-              {["mcq", "short"].map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => {
-                    setMode(item);
-                    if (item === "short") updateAnswer("");
-                  }}
-                  className={`rounded-lg px-4 py-2 text-sm font-black transition ${
-                    mode === item ? "bg-white text-emerald-700 shadow-sm dark:bg-slate-800 dark:text-emerald-100" : "text-slate-500 dark:text-slate-400"
-                  }`}
-                >
-                  {item === "mcq" ? "MCQ" : "Short answer"}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {mode === "mcq" && hasOptions ? (
+          {isMcq ? (
             <div className="grid gap-3 sm:grid-cols-2">
-              {activeQuestion.options.map((option, index) => (
+              {(activeQuestion?.options || []).map((option, index) => (
                 <button
                   key={`${option}-${index}`}
                   type="button"
@@ -156,11 +135,11 @@ export function SubmitAnswerPage() {
           )}
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <Button type="submit" size="lg" variant="success" loading={loading}>
+            <Button type="submit" size="lg" variant="role" loading={loading}>
               <Send size={18} />
               Submit response
             </Button>
-            <Badge tone="gold">One answer per question</Badge>
+            <Badge tone="slate">One answer per question</Badge>
           </div>
         </form>
       </DashboardCard>

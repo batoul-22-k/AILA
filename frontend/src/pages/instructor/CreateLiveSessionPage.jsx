@@ -1,8 +1,8 @@
-import { Copy, ExternalLink, QrCode, Radio, RotateCcw, StopCircle } from "lucide-react";
+import { Copy, ExternalLink, QrCode, Radio, RotateCcw, StopCircle, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { createInstructorSession, listClasses, listInstructorSessions, updateInstructorSessionStatus } from "../../api/client";
+import { createInstructorSession, deleteInstructorSession, listClasses, listInstructorQuestions, listInstructorSessions, updateInstructorSessionStatus } from "../../api/client";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { DashboardCard } from "../../components/DashboardCard";
@@ -11,6 +11,40 @@ import { PageHeader } from "../../components/PageHeader";
 import { useToast } from "../../components/ToastProvider";
 import { useAuth } from "../../state/AuthContext";
 import { useCurrentWorkspace } from "../../state/WorkspaceContext";
+
+function getStoredJsonArray(key) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function studioKey(classId, name) {
+  return `contentStudio:${classId}:${name}`;
+}
+
+function getStoredApprovedQuestionIds(classId) {
+  const scoped = classId ? getStoredJsonArray(studioKey(classId, "approvedQuestionIds")) : [];
+  const legacy = getStoredJsonArray("instructorApprovedQuestionIds");
+  return Array.from(new Set([...scoped, ...legacy]));
+}
+
+function persistApprovedQuestionIds(classId, questionIds) {
+  const cleanIds = Array.from(new Set(questionIds.filter(Boolean)));
+  if (classId) localStorage.setItem(studioKey(classId, "approvedQuestionIds"), JSON.stringify(cleanIds));
+  localStorage.setItem("instructorApprovedQuestionIds", JSON.stringify(cleanIds));
+  return cleanIds;
+}
+
+function removeStoredQuestions(classId, questionIds) {
+  if (!classId || !questionIds.length) return;
+  const deletedIds = new Set(questionIds);
+  const storedQuestions = getStoredJsonArray(studioKey(classId, "questions"));
+  const nextQuestions = storedQuestions.filter((question) => !deletedIds.has(question?.question_id));
+  localStorage.setItem(studioKey(classId, "questions"), JSON.stringify(nextQuestions));
+}
 
 export function CreateLiveSessionPage() {
   const { showToast } = useToast();
@@ -23,8 +57,10 @@ export function CreateLiveSessionPage() {
   const [created, setCreated] = useState(null);
   const [scheduledFor, setScheduledFor] = useState("");
   const [loading, setLoading] = useState(false);
+  const [questionsLoading, setQuestionsLoading] = useState(false);
   const [updatingSessionId, setUpdatingSessionId] = useState("");
-  const approvedQuestionIds = JSON.parse(localStorage.getItem("instructorApprovedQuestionIds") || "[]");
+  const [deletingSessionId, setDeletingSessionId] = useState("");
+  const [approvedQuestionIds, setApprovedQuestionIds] = useState(() => getStoredApprovedQuestionIds(classId));
   const classNames = Object.fromEntries(classes.map((classDoc) => [classDoc.class_id, classDoc.name]));
   const activeCount = sessions.filter((session) => session.status === "active").length;
   const scheduledCount = sessions.filter((session) => session.status === "scheduled").length;
@@ -50,6 +86,29 @@ export function CreateLiveSessionPage() {
     }
   }
 
+  async function loadApprovedQuestionIds(nextClassId = classId) {
+    const storedIds = getStoredApprovedQuestionIds(nextClassId);
+    if (!nextClassId) {
+      setApprovedQuestionIds(storedIds);
+      return storedIds;
+    }
+    setQuestionsLoading(true);
+    try {
+      const questions = await listInstructorQuestions({ class_id: nextClassId, status: "approved" });
+      const backendIds = questions.map((question) => question.question_id).filter(Boolean);
+      const storedOrder = storedIds.filter((questionId) => backendIds.includes(questionId));
+      const missingStoredIds = backendIds.filter((questionId) => !storedOrder.includes(questionId));
+      const nextIds = persistApprovedQuestionIds(nextClassId, [...storedOrder, ...missingStoredIds]);
+      setApprovedQuestionIds(nextIds);
+      return nextIds;
+    } catch {
+      setApprovedQuestionIds(storedIds);
+      return storedIds;
+    } finally {
+      setQuestionsLoading(false);
+    }
+  }
+
   async function loadClasses() {
     try {
       const result = await listClasses();
@@ -60,7 +119,11 @@ export function CreateLiveSessionPage() {
         (instructorWorkspace?.class_id && availableIds.includes(instructorWorkspace.class_id) && instructorWorkspace.class_id) ||
         result[0]?.class_id ||
         "";
-      if (nextClassId) setClassId(nextClassId);
+      if (nextClassId) {
+        setClassId(nextClassId);
+        localStorage.setItem("instructorSelectedClassId", nextClassId);
+        await loadApprovedQuestionIds(nextClassId);
+      }
     } catch {
       setClasses([]);
     }
@@ -71,15 +134,23 @@ export function CreateLiveSessionPage() {
     loadSessions();
   }, []);
 
+  useEffect(() => {
+    if (!classId) return;
+    localStorage.setItem("instructorSelectedClassId", classId);
+    void loadApprovedQuestionIds(classId);
+  }, [classId]);
+
   async function handleCreate(event) {
     event.preventDefault();
     setLoading(true);
     try {
       localStorage.setItem("instructorSelectedClassId", classId);
+      const questionIds = await loadApprovedQuestionIds(classId);
+      if (questionIds.length === 0) throw new Error("Approve generated questions before creating a live session.");
       const payload = {
         instructor_id: user?.user_id,
         class_id: classId,
-        question_ids: approvedQuestionIds,
+        question_ids: questionIds,
         scheduled_for: scheduledFor ? new Date(scheduledFor).toISOString() : undefined,
       };
       const session = await createInstructorSession(payload);
@@ -114,6 +185,37 @@ export function CreateLiveSessionPage() {
     }
   }
 
+  async function handleDeleteSession(session) {
+    const confirmed = window.confirm(
+      `Delete session ${session.session_code}? This removes it for everyone and deletes its responses, participation records, and attached questions that are not used by another session.`,
+    );
+    if (!confirmed) return;
+
+    setDeletingSessionId(session.session_id);
+    try {
+      const result = await deleteInstructorSession(session.session_id);
+      setSessions((current) => current.filter((item) => item.session_id !== session.session_id));
+      if (created?.session_id === session.session_id) setCreated(null);
+      const savedSession = JSON.parse(localStorage.getItem("instructorSession") || "null");
+      if (savedSession?.session_id === session.session_id) localStorage.removeItem("instructorSession");
+      if (result.deleted_question_ids?.length) {
+        const nextApprovedIds = approvedQuestionIds.filter((questionId) => !result.deleted_question_ids.includes(questionId));
+        persistApprovedQuestionIds(classId, nextApprovedIds);
+        removeStoredQuestions(classId, result.deleted_question_ids);
+        setApprovedQuestionIds(nextApprovedIds);
+      }
+      showToast({
+        title: "Session deleted",
+        description: `${session.session_code} was removed with its session data and unused attached questions.`,
+        tone: "success",
+      });
+    } catch (err) {
+      showToast({ title: "Could not delete session", description: err instanceof Error ? err.message : "Could not delete session", tone: "error" });
+    } finally {
+      setDeletingSessionId("");
+    }
+  }
+
   async function handleCopyJoinLink(session) {
     try {
       await navigator.clipboard.writeText(session.join_link);
@@ -141,7 +243,7 @@ export function CreateLiveSessionPage() {
     <div className="page-grid">
       <PageHeader eyebrow="Live sessions" title="Create a classroom session" description="Create a live session from approved questions. The backend generates the session code and QR join link." tone="role" />
 
-      {approvedQuestionIds.length === 0 && <EmptyState title="No approved questions" description="Approve generated questions before creating a live session." />}
+      {approvedQuestionIds.length === 0 && !questionsLoading && <EmptyState title="No approved questions" description="Approve generated questions before creating a live session." />}
 
       <DashboardCard>
         <form className="grid gap-4" onSubmit={handleCreate}>
@@ -166,8 +268,10 @@ export function CreateLiveSessionPage() {
               placeholder="Schedule start"
             />
           </label>
-          <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">{approvedQuestionIds.length} approved questions will be used.</p>
-          <Button className="w-fit" type="submit" variant="role" loading={loading} disabled={approvedQuestionIds.length === 0}>
+          <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">
+            {questionsLoading ? "Checking approved questions..." : `${approvedQuestionIds.length} approved questions will be used.`}
+          </p>
+          <Button className="w-fit" type="submit" variant="role" loading={loading || questionsLoading} disabled={approvedQuestionIds.length === 0 || questionsLoading}>
             <Radio size={18} />
             {scheduledFor ? "Schedule session" : "Create session"}
           </Button>
@@ -247,42 +351,55 @@ export function CreateLiveSessionPage() {
                 )}
                 <p className="mt-2 break-all text-xs font-semibold text-slate-500 dark:text-slate-400">{session.join_link}</p>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2 lg:min-w-80">
-                <Link to={`/instructor/live/${session.session_id}`}>
-                  <Button className="w-full" variant="outline" type="button">
+              <div className="flex flex-wrap gap-2 lg:max-w-64 lg:justify-end">
+                <Link to={`/instructor/live/${session.session_id}`} title="Open live dashboard" aria-label={`Open session ${session.session_code}`}>
+                  <Button size="icon" variant="outline" type="button" title="Open live dashboard" aria-label="Open live dashboard">
                     <ExternalLink size={16} />
-                    Open
                   </Button>
                 </Link>
-                <Button type="button" variant="outline" onClick={() => handleCopyJoinLink(session)}>
+                <Button size="icon" type="button" variant="outline" title="Copy join link" aria-label="Copy join link" onClick={() => handleCopyJoinLink(session)}>
                   <Copy size={16} />
-                  Copy link
                 </Button>
-                <Button type="button" variant="outline" onClick={() => handleDownloadQr(session)}>
+                <Button size="icon" type="button" variant="outline" title="Download QR" aria-label="Download QR" onClick={() => handleDownloadQr(session)}>
                   <QrCode size={16} />
-                  Download QR
                 </Button>
                 {session.status === "active" ? (
                   <Button
+                    size="icon"
                     type="button"
                     variant="outline"
+                    title="Stop session"
+                    aria-label="Stop session"
                     loading={updatingSessionId === session.session_id}
                     onClick={() => handleStatusChange(session, "closed")}
                   >
                     <StopCircle size={16} />
-                    {getSessionActionLabel(session.status)}
                   </Button>
                 ) : (
                   <Button
+                    size="icon"
                     type="button"
                     variant="role"
+                    title={getSessionActionLabel(session.status)}
+                    aria-label={getSessionActionLabel(session.status)}
                     loading={updatingSessionId === session.session_id}
                     onClick={() => handleStatusChange(session, "active")}
                   >
                     <RotateCcw size={16} />
-                    {getSessionActionLabel(session.status)}
                   </Button>
                 )}
+                <Button
+                  className="text-red-600 hover:border-red-300 hover:text-red-700"
+                  size="icon"
+                  type="button"
+                  variant="outline"
+                  title="Delete session"
+                  aria-label="Delete session"
+                  loading={deletingSessionId === session.session_id}
+                  onClick={() => handleDeleteSession(session)}
+                >
+                  <Trash2 size={16} />
+                </Button>
               </div>
             </div>
           </DashboardCard>

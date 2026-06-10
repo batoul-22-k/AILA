@@ -335,10 +335,6 @@ select {
   padding: 0.85rem;
 }
 
-[data-role="student"] .role-sidebar {
-  width: 16.5rem;
-}
-
 [data-role="admin"] .role-sidebar {
   width: 19rem;
 }
@@ -352,11 +348,6 @@ select {
 
 .adaptive-card:not([data-surface="custom"]) {
   background: color-mix(in srgb, var(--role-surface) 96%, transparent);
-}
-
-[data-role="student"] .adaptive-card {
-  border-width: 1px;
-  backdrop-filter: none;
 }
 
 [data-role="instructor"] .adaptive-card {
@@ -485,12 +476,6 @@ select {
   font-weight: 680;
 }
 
-[data-role="student"] .adaptive-button {
-  min-height: 3rem;
-  border-radius: 999px;
-  box-shadow: none;
-}
-
 .adaptive-button:active {
   transform: translateY(2px);
   box-shadow: var(--role-pressed-shadow);
@@ -510,12 +495,6 @@ select {
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
 }
 
-[data-role="student"] .adaptive-input {
-  min-height: 3rem;
-  background: color-mix(in srgb, var(--role-surface) 96%, white);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
-}
-
 .adaptive-answer {
   border-color: var(--role-border);
   border-radius: 24px;
@@ -526,22 +505,12 @@ select {
   border-color: var(--role-accent);
 }
 
-[data-role="student"] .adaptive-answer {
-  min-height: 3.5rem;
-  border-color: var(--role-border);
-  box-shadow: none;
-}
-
 [data-role="admin"] .page-grid {
   gap: 1rem;
 }
 
 .role-mobile-nav {
   display: none;
-}
-
-[data-role="student"] .role-mobile-nav {
-  display: block;
 }
 
 .page-grid {
@@ -597,25 +566,6 @@ select {
   color: var(--color-muted);
 }
 
-[data-role="student"] .role-mobile-nav > div {
-  border-color: var(--role-card-border);
-  background: color-mix(in srgb, var(--role-surface) 94%, transparent);
-  box-shadow: var(--role-card-shadow);
-}
-
-[data-role="student"] .role-mobile-nav a:not([aria-current="page"]) {
-  color: var(--color-muted);
-}
-
-[data-role="student"] .role-mobile-nav a[aria-current="page"] {
-  background: var(--role-primary);
-  color: #ffffff;
-  box-shadow: none;
-}
-
-[data-role="student"] .student-settings .adaptive-card:not([data-surface="custom"]) {
-  background: color-mix(in srgb, var(--role-surface) 98%, transparent);
-}
 
 .subtle-scroll {
   scrollbar-width: thin;

@@ -178,11 +178,12 @@ class InstructorSessionCreateRequest(BaseModel):
 
 
 class InstructorSessionStatusUpdate(BaseModel):
-    status: Literal["scheduled", "active", "closed"]
+    status: Literal["scheduled", "active", "closed", "finished"]
 
 
 class ActiveQuestionUpdate(BaseModel):
     question_id: str
+    duration_seconds: int | None = None
 
 
 class InstructorSessionOut(BaseModel):
@@ -194,8 +195,12 @@ class InstructorSessionOut(BaseModel):
     session_code: str
     join_link: str
     qr_code_base64: str
-    status: Literal["scheduled", "active", "closed"]
+    status: Literal["scheduled", "active", "closed", "finished"]
     scheduled_for: datetime | None = None
+    question_started_at: datetime | None = None
+    question_duration_seconds: int | None = None
+    question_ends_at: datetime | None = None
+    revealed_question_ids: list[str] = Field(default_factory=list)
     created_at: datetime
 
 
@@ -232,7 +237,11 @@ class SessionOut(BaseModel):
     question_ids: list[str]
     active_question_id: str | None = None
     session_code: str
-    status: Literal["active", "closed"]
+    status: Literal["active", "closed", "finished"]
+    question_started_at: datetime | None = None
+    question_duration_seconds: int | None = None
+    question_ends_at: datetime | None = None
+    revealed_question_ids: list[str] = Field(default_factory=list)
     created_at: datetime
 
 
@@ -243,6 +252,16 @@ class LiveQuestionOut(BaseModel):
     options: list[str] = Field(default_factory=list)
     bloom_level: str | None = None
     difficulty: str | None = None
+    source_slide: int | None = None
+    correct_answer: str | None = None
+    explanation: str | None = None
+    is_revealed: bool = False
+    student_answer: str | None = None
+    is_correct: bool | None = None
+    stars_earned: int = 0
+    session_stars: int = 0
+    badge_earned: bool = False
+    badge_type: str | None = None
 
 
 class JoinSessionRequest(BaseModel):
@@ -263,8 +282,15 @@ class ResponseOut(BaseModel):
     question_id: str
     student_id: str
     answer: str
+    semantic_score: float | None = None
+    semantic_label: Literal["correct", "partial", "incorrect"] | None = None
+    semantic_engine: str | None = None
+    is_correct: bool | None = None
+    stars_earned: int = 0
+    revealed_after_submission: bool = False
     correctness_placeholder: str = "pending"
     response_time_placeholder: float | None = None
+    response_time_seconds: float | None = None
     submitted_at: datetime
 
 
@@ -272,8 +298,99 @@ class LiveSessionStats(BaseModel):
     session_id: str
     participation_count: int
     answer_distribution: dict[str, dict[str, int]]
+    correct_counts: dict[str, int] = Field(default_factory=dict)
+    incorrect_counts: dict[str, int] = Field(default_factory=dict)
     unanswered_count_placeholder: int
     updated_at: datetime
+
+
+class AnalyticsResultOut(BaseModel):
+    analytics_id: str
+    class_id: str
+    student_id: str
+    week: str
+    sessions_attended: int = 0
+    total_sessions: int = 0
+    attendance_rate: float
+    questions_presented: int = 0
+    questions_answered: int = 0
+    participation_rate: float
+    consistency_rate: float
+    sessions_with_answers: int = 0
+    average_response_time: float = 0.0
+    average_semantic_score: float = 0.0
+    engagement_score: float
+    risk_level: Literal["Low", "Medium", "High"] = "Low"
+    risk_reason: str = "On track"
+    calculated_at: datetime
+
+
+class ClassAnalyticsSummaryOut(BaseModel):
+    class_id: str
+    week: str | None = None
+    average_attendance_rate: float
+    average_participation_rate: float
+    average_engagement_score: float
+    total_students: int
+    active_students: int
+    at_risk_students: int = 0
+    weekly_averages: list[dict] = Field(default_factory=list)
+
+
+class AnalyticsRecalculateOut(BaseModel):
+    class_id: str
+    calculated_count: int
+    total_students: int
+    total_sessions: int
+    weeks: list[str] = Field(default_factory=list)
+    calculated_at: datetime
+
+
+class StudentProgressOut(BaseModel):
+    student_id: str
+    class_id: str | None = None
+    attendance_rate: float = 0.0
+    participation_rate: float = 0.0
+    consistency_rate: float = 0.0
+    engagement_score: float = 0.0
+    risk_level: Literal["Low", "Medium", "High"] = "Low"
+    sessions_attended: int = 0
+    total_sessions: int = 0
+    questions_answered: int = 0
+    questions_presented: int = 0
+    sessions_with_answers: int = 0
+    weekly_trend: list[dict] = Field(default_factory=list)
+
+
+class PredictionResultOut(BaseModel):
+    prediction_id: str
+    student_id: str
+    class_id: str
+    predicted_performance: float
+    risk_probability: float
+    predicted_at: datetime
+    features: dict = Field(default_factory=dict)
+
+
+class AtRiskStudentOut(BaseModel):
+    student_id: str
+    student_name: str
+    email: str | None = None
+    class_id: str
+    class_name: str
+    week: str | None = None
+    attendance_rate: float
+    participation_rate: float
+    consistency_rate: float
+    engagement_score: float
+    risk_level: Literal["Low", "Medium", "High"]
+    risk_reason: str
+    sessions_attended: int
+    total_sessions: int
+    questions_answered: int
+    questions_presented: int
+    sessions_with_answers: int
+    weekly_history: list[dict] = Field(default_factory=list)
 
 
 class DashboardSummary(BaseModel):

@@ -3,16 +3,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import ai, analytics, auth, classes, dashboards, instructor, lecture_uploads, notifications, questions, responses, sessions, users
+from app.api import ai, analytics, auth, classes, dashboards, instructor, lecture_uploads, notifications, progress, questions, responses, sessions, users
 from app.config import get_settings
-from app.database import close_mongo_connection, connect_to_mongo, get_database
-from app.seeds import seed_demo_auth_data
+from app.database import close_mongo_connection, connect_to_mongo
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect_to_mongo()
-    await seed_demo_auth_data(get_database())
     yield
     await close_mongo_connection()
 
@@ -38,9 +36,11 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
 app.include_router(instructor.router, prefix="/api")
 app.include_router(analytics.router, prefix="/api")
+app.include_router(analytics.router)
 app.include_router(classes.router, prefix="/api")
 app.include_router(lecture_uploads.router, prefix="/api")
 app.include_router(notifications.router, prefix="/api")
+app.include_router(progress.router, prefix="/api")
 app.include_router(questions.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
 app.include_router(responses.router, prefix="/api")

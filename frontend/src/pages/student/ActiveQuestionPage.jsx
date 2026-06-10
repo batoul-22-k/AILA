@@ -1,14 +1,15 @@
-import { MessageSquareText, Timer } from "lucide-react";
+import { CheckCircle2, MessageSquareText, Send, Star, Timer, Trophy, XCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 
-import { getLiveSessionQuestions, getWebSocketUrl } from "../../api/client";
+import { getLiveSession, getLiveSessionQuestions, getWebSocketUrl, submitAnswer } from "../../api/client";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { DashboardCard } from "../../components/DashboardCard";
+import { Modal } from "../../components/Modal";
 import { PageHeader } from "../../components/PageHeader";
 import { QuestionCard } from "../../components/QuestionCard";
 import { useToast } from "../../components/ToastProvider";
+import { useAuth } from "../../state/AuthContext";
 
 const QUESTION_DURATION_SECONDS = 180;
 
@@ -23,20 +24,44 @@ function formatTime(seconds) {
   return `${minutes}:${remainder}`;
 }
 
+function secondsUntil(value, fallback = QUESTION_DURATION_SECONDS) {
+  if (!value) return fallback;
+  const endTime = new Date(value).getTime();
+  if (Number.isNaN(endTime)) return fallback;
+  return Math.max(Math.ceil((endTime - Date.now()) / 1000), 0);
+}
+
 function shortenQuestionId(id) {
   if (!id || id.length <= 16) return id;
   return `${id.slice(0, 8)}...${id.slice(-4)}`;
+}
+
+function storeActiveQuestion(session, questionId) {
+  if (!session?.session_id || !questionId) return;
+  localStorage.setItem(`activeQuestionId:${session.session_id}`, questionId);
+  localStorage.setItem("activeQuestionId", questionId);
+  localStorage.setItem("activeSession", JSON.stringify({ ...session, active_question_id: questionId }));
+}
+
+function storeSession(session) {
+  if (!session?.session_id) return;
+  localStorage.setItem("activeSession", JSON.stringify(session));
+  if (session.active_question_id) {
+    localStorage.setItem(`activeQuestionId:${session.session_id}`, session.active_question_id);
+    localStorage.setItem("activeQuestionId", session.active_question_id);
+  }
 }
 
 function getActiveQuestionId(session, questionIds) {
   if (session?.active_question_id && questionIds.includes(session.active_question_id)) return session.active_question_id;
   const scopedQuestionId = session?.session_id ? localStorage.getItem(`activeQuestionId:${session.session_id}`) : null;
   const storedQuestionId = scopedQuestionId || localStorage.getItem("activeQuestionId");
-  return questionIds.includes(storedQuestionId) ? storedQuestionId : questionIds[0] ?? "question_demo";
+  if (questionIds.includes(storedQuestionId)) return storedQuestionId;
+  return questionIds[0] ?? "";
 }
 
 function getAnswerKey(sessionId, questionId) {
-  return `selectedAnswer:${sessionId || "demo"}:${questionId || "question_demo"}`;
+  return `selectedAnswer:${sessionId || "no-session"}:${questionId || "no-question"}`;
 }
 
 function getStoredAnswer(sessionId, questionId) {
@@ -45,7 +70,8 @@ function getStoredAnswer(sessionId, questionId) {
 
 export function ActiveQuestionPage() {
   const { showToast } = useToast();
-  const session = useMemo(() => getSession(), []);
+  const { user } = useAuth();
+  const [session, setSession] = useState(() => getSession());
   const questionIds = useMemo(() => session?.question_ids ?? [], [session]);
   const [questions, setQuestions] = useState([]);
   const [activeQuestionId, setActiveQuestionId] = useState(() => getActiveQuestionId(session, questionIds));
@@ -53,33 +79,74 @@ export function ActiveQuestionPage() {
   const activeQuestionNumber = activeQuestionIndex + 1;
   const totalQuestions = Math.max(questionIds.length, 1);
   const activeQuestion = questions.find((question) => question.question_id === activeQuestionId);
-  const isMcq = (activeQuestion?.options?.length ?? 0) > 0;
+  const isMcq = activeQuestion ? (activeQuestion.type ? activeQuestion.type === "mcq" : (activeQuestion.options?.length ?? 0) > 0) : true;
   const questionType = isMcq ? "MCQ" : "Short answer";
+  const hasSubmitted = Boolean(activeQuestion?.student_answer);
+  const isRevealed = Boolean(activeQuestion?.is_revealed);
+  const isTimeExpired = !isRevealed && Boolean(session?.question_ends_at) && timeLeft <= 0;
+  const isAnswerLocked = isRevealed || isTimeExpired;
+  const sessionStars = Math.max(0, ...questions.map((question) => Number(question.session_stars || 0)));
+  const badgeQuestion = questions.find((question) => question.badge_earned);
   const [selected, setSelected] = useState(() => getStoredAnswer(session?.session_id, getActiveQuestionId(session, questionIds)));
+  const [submitting, setSubmitting] = useState(false);
   const [timeLeft, setTimeLeft] = useState(QUESTION_DURATION_SECONDS);
+  const [badgeOpen, setBadgeOpen] = useState(false);
 
-  useEffect(() => {
-    async function loadQuestions() {
-      if (!session?.session_id) return;
-      try {
-        const result = await getLiveSessionQuestions(session.session_id);
-        setQuestions(result);
-      } catch (err) {
+  async function loadLiveState(showError = true) {
+    if (!session?.session_id) return;
+    try {
+      const [sessionResult, questionsResult] = await Promise.all([
+        getLiveSession(session.session_id),
+        getLiveSessionQuestions(session.session_id),
+      ]);
+      storeSession(sessionResult);
+      setSession(sessionResult);
+      setQuestions(questionsResult);
+      const nextQuestionIds = sessionResult.question_ids ?? [];
+      const nextActiveQuestionId = getActiveQuestionId(sessionResult, nextQuestionIds);
+      setActiveQuestionId(nextActiveQuestionId);
+      const nextActiveQuestion = questionsResult.find((question) => question.question_id === nextActiveQuestionId);
+      if (nextActiveQuestion?.student_answer) {
+        setSelected(nextActiveQuestion.student_answer);
+        localStorage.setItem(getAnswerKey(sessionResult.session_id, nextActiveQuestionId), nextActiveQuestion.student_answer);
+      }
+      if (questionsResult.some((question) => question.badge_earned)) setBadgeOpen(true);
+    } catch (err) {
+      if (showError) {
         showToast({ title: "Could not load live questions", description: err instanceof Error ? err.message : "Could not load live questions", tone: "error" });
       }
     }
+  }
 
-    loadQuestions();
+  useEffect(() => {
+    let isMounted = true;
+
+    if (isMounted) void loadLiveState();
+    const refreshInterval = window.setInterval(() => {
+      if (isMounted) void loadLiveState(false);
+    }, 4000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(refreshInterval);
+    };
   }, [session?.session_id, showToast]);
 
   useEffect(() => {
+    setActiveQuestionId(getActiveQuestionId(session, questionIds));
+  }, [questionIds, session?.active_question_id]);
+
+  useEffect(() => {
     function syncActiveQuestion() {
-      setActiveQuestionId(getActiveQuestionId(session, questionIds));
+      const latestSession = getSession() || session;
+      setSession(latestSession);
+      setActiveQuestionId(getActiveQuestionId(latestSession, latestSession?.question_ids ?? questionIds));
     }
 
     function handleActivatedQuestion(event) {
       if (!event.detail?.questionId) return;
       if (event.detail.sessionId && session?.session_id && event.detail.sessionId !== session.session_id) return;
+      storeActiveQuestion(session, event.detail.questionId);
+      setSession((current) => ({ ...(current || session), active_question_id: event.detail.questionId }));
       setActiveQuestionId(event.detail.questionId);
     }
 
@@ -98,10 +165,38 @@ export function ActiveQuestionPage() {
     socket.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        if (message.type !== "active_question" || !message.payload?.question_id) return;
-        localStorage.setItem(`activeQuestionId:${session.session_id}`, message.payload.question_id);
-        localStorage.setItem("activeQuestionId", message.payload.question_id);
-        setActiveQuestionId(message.payload.question_id);
+        if ((message.type === "active_question" || message.type === "question_active") && message.payload?.question_id) {
+          const nextSession = {
+            ...(session || {}),
+            active_question_id: message.payload.question_id,
+            question_started_at: message.payload.question_started_at || session?.question_started_at,
+            question_duration_seconds: message.payload.question_duration_seconds ?? session?.question_duration_seconds,
+            question_ends_at: message.payload.question_ends_at || session?.question_ends_at,
+          };
+          storeActiveQuestion(nextSession, message.payload.question_id);
+          setSession((current) => ({
+            ...(current || session),
+            active_question_id: message.payload.question_id,
+            question_started_at: message.payload.question_started_at || current?.question_started_at,
+            question_duration_seconds: message.payload.question_duration_seconds ?? current?.question_duration_seconds,
+            question_ends_at: message.payload.question_ends_at || current?.question_ends_at,
+          }));
+          setActiveQuestionId(message.payload.question_id);
+          setTimeLeft(secondsUntil(message.payload.question_ends_at, message.payload.question_duration_seconds || QUESTION_DURATION_SECONDS));
+          showToast({ title: "New question active", description: message.payload.message || "A new question is active.", tone: "info" });
+          void loadLiveState(false);
+        }
+        if (message.type === "answer_revealed") {
+          showToast({ title: "Answer revealed", description: "Your feedback is now available.", tone: "success" });
+          void loadLiveState(false);
+        }
+        if (message.type === "reward_earned") {
+          void loadLiveState(false);
+        }
+        if (message.type === "session_finished") {
+          showToast({ title: "Session finished", description: "Your session results are ready.", tone: "info" });
+          void loadLiveState(false);
+        }
       } catch {
         // Ignore malformed live messages.
       }
@@ -111,41 +206,117 @@ export function ActiveQuestionPage() {
   }, [session?.session_id]);
 
   useEffect(() => {
-    setSelected(getStoredAnswer(session?.session_id, activeQuestionId));
-    setTimeLeft(QUESTION_DURATION_SECONDS);
-  }, [activeQuestionId, questionIds.length, session?.session_id]);
+    setSelected(activeQuestion?.student_answer || getStoredAnswer(session?.session_id, activeQuestionId));
+    setTimeLeft(secondsUntil(session?.question_ends_at, session?.question_duration_seconds || QUESTION_DURATION_SECONDS));
+  }, [activeQuestion?.student_answer, activeQuestionId, questionIds.length, session?.question_duration_seconds, session?.question_ends_at, session?.session_id]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      setTimeLeft((current) => Math.max(current - 1, 0));
+      setTimeLeft(secondsUntil(session?.question_ends_at, session?.question_duration_seconds || QUESTION_DURATION_SECONDS));
     }, 1000);
     return () => window.clearInterval(interval);
-  }, [activeQuestionId]);
+  }, [activeQuestionId, session?.question_duration_seconds, session?.question_ends_at]);
 
   function handleSelect(answer) {
+    if (isAnswerLocked) return;
     localStorage.setItem(getAnswerKey(session?.session_id, activeQuestionId), answer);
     localStorage.setItem("selectedAnswer", answer);
     setSelected(answer);
   }
 
+  async function handleSubmit() {
+    if (!session?.session_id) {
+      showToast({ title: "Join a session first", description: "Join a session before submitting an answer.", tone: "warning" });
+      return;
+    }
+    if (!activeQuestion) {
+      showToast({ title: "Question still loading", description: "Wait for the active question to load before submitting.", tone: "warning" });
+      return;
+    }
+    if (!selected.trim()) {
+      showToast({
+        title: "Answer required",
+        description: isMcq ? "Choose an answer before submitting." : "Write an answer before submitting.",
+        tone: "warning",
+      });
+      return;
+    }
+    if (isTimeExpired) {
+      showToast({ title: "Time ended", description: "The answer window for this question has closed.", tone: "warning" });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await submitAnswer({
+        session_id: session.session_id,
+        question_id: activeQuestionId,
+        student_id: user?.user_id || "current",
+        answer: selected,
+      });
+      showToast({ title: "Answer submitted", description: "Your instructor will reveal feedback when ready.", tone: "success" });
+      await loadLiveState(false);
+    } catch (err) {
+      showToast({ title: "Could not submit answer", description: err instanceof Error ? err.message : "Could not submit answer", tone: "error" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <div className="page-grid">
-      <PageHeader eyebrow="Live question" title="Think, choose, and submit confidently" description="Your answer updates the instructor dashboard in real time." tone="emerald" />
+      <PageHeader eyebrow="Live class" title="Active question" description="Answer the question currently selected by your instructor." tone="role" />
       <div className="mx-auto grid w-full max-w-5xl gap-4 lg:grid-cols-[1fr_320px]">
-        <QuestionCard
-          title={`Question ${activeQuestionNumber} of ${totalQuestions}`}
-          subtitle={`ID: ${shortenQuestionId(activeQuestionId)}`}
-          type={questionType}
-          status="Live"
-          prompt={activeQuestion?.question_text || "Waiting for the instructor to activate the next question."}
-          options={activeQuestion?.options || []}
-          selected={selected}
-          onSelect={handleSelect}
-        />
+        {isMcq ? (
+          <QuestionCard
+            title={`Question ${activeQuestionNumber} of ${totalQuestions}`}
+            subtitle={`ID: ${shortenQuestionId(activeQuestionId)}`}
+            type={questionType}
+            status={isRevealed ? "Revealed" : isTimeExpired ? "Time ended" : hasSubmitted ? "Submitted" : "Live"}
+            prompt={activeQuestion?.question_text || "Waiting for the instructor to activate the next question."}
+            options={activeQuestion?.options || []}
+            selected={selected}
+            onSelect={handleSelect}
+            disabled={isAnswerLocked}
+            revealed={isRevealed}
+            correctAnswer={activeQuestion?.correct_answer || ""}
+            showActions={false}
+          />
+        ) : (
+          <DashboardCard>
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-role-border pb-4 dark:border-slate-800">
+              <div>
+                <h3 className="font-black text-slate-950 dark:text-white">Question {activeQuestionNumber} of {totalQuestions}</h3>
+                <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">ID: {shortenQuestionId(activeQuestionId)}</p>
+                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{questionType}</p>
+              </div>
+              <Badge tone={isRevealed ? "green" : isTimeExpired ? "gold" : hasSubmitted ? "green" : "teal"}>{isRevealed ? "Revealed" : isTimeExpired ? "Time ended" : hasSubmitted ? "Submitted" : "Live"}</Badge>
+            </div>
+            <p className="mt-5 text-lg font-black leading-7 text-slate-950 dark:text-white">
+              {activeQuestion?.question_text || "Waiting for the instructor to activate the next question."}
+            </p>
+            <label className="mt-5 grid gap-2 text-sm font-black text-slate-700 dark:text-slate-200">
+              Your answer
+              <textarea
+                className="focus-ring min-h-44 rounded-[20px] border border-role-border bg-role-hover px-4 py-3 text-sm font-semibold leading-6 text-slate-950 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
+                value={selected}
+                onChange={(event) => handleSelect(event.target.value)}
+                disabled={isAnswerLocked}
+                placeholder="Write your response..."
+              />
+            </label>
+          </DashboardCard>
+        )}
 
         <DashboardCard>
-          <Badge tone="teal">Session {session?.session_code ?? "Demo"}</Badge>
+          <Badge tone="role">Session {session?.session_code ?? "Demo"}</Badge>
           <div className="mt-5 grid gap-3">
+            <div className="flex items-center justify-between rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
+              <span className="flex items-center gap-2 text-sm font-bold text-slate-600 dark:text-slate-300">
+                <Star size={17} />
+                Session stars
+              </span>
+              <span className="font-black">{sessionStars}</span>
+            </div>
             <div className="flex items-center justify-between rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
               <span className="flex items-center gap-2 text-sm font-bold text-slate-600 dark:text-slate-300">
                 <Timer size={17} />
@@ -153,27 +324,49 @@ export function ActiveQuestionPage() {
               </span>
               <span className="font-black">{formatTime(timeLeft)}</span>
             </div>
-            <div className="flex items-center justify-between rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
+            {/* <div className="flex items-center justify-between rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
               <span className="flex items-center gap-2 text-sm font-bold text-slate-600 dark:text-slate-300">
                 <MessageSquareText size={17} />
                 Format
               </span>
               <span className="font-black">{questionType}</span>
-            </div>
+            </div> */}
           </div>
-          {isMcq && !selected ? (
-            <Button className="mt-5 w-full" size="lg" variant="success" disabled>
-              Choose an answer first
-            </Button>
-          ) : (
-            <Link to="/student/submit-answer" className="mt-5 block">
-              <Button className="w-full" size="lg" variant="success">
-                {isMcq ? "Submit answer" : "Write answer"}
-              </Button>
-            </Link>
+          {hasSubmitted && !isRevealed && (
+            <div className="mt-4 rounded-[18px] bg-role-hover p-4 text-sm font-semibold text-slate-600 dark:bg-slate-950 dark:text-slate-300">
+              Submitted. The correct answer will appear after your instructor reveals it.
+            </div>
           )}
+          {isTimeExpired && !hasSubmitted && (
+            <div className="mt-4 rounded-[18px] bg-amber-50 p-4 text-sm font-semibold text-amber-900 dark:bg-amber-400/10 dark:text-amber-100">
+              Time ended. Your instructor may activate another question.
+            </div>
+          )}
+          {isRevealed && (
+            <div className={`mt-4 rounded-[18px] border p-4 ${activeQuestion?.is_correct ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-400/30 dark:bg-emerald-500/10 dark:text-emerald-100" : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-100"}`}>
+              <div className="flex items-center gap-2 text-sm font-black">
+                {activeQuestion?.is_correct ? <CheckCircle2 size={17} /> : <XCircle size={17} />}
+                {activeQuestion?.is_correct ? `Correct +${activeQuestion.stars_earned || 1} star` : "Review the correct answer"}
+              </div>
+              <p className="mt-3 text-sm font-bold">Correct answer: {activeQuestion?.correct_answer || "Available from your instructor"}</p>
+              {activeQuestion?.explanation && <p className="mt-2 text-sm font-semibold leading-6 opacity-90">{activeQuestion.explanation}</p>}
+            </div>
+          )}
+          <Button className="mt-5 w-full" size="lg" variant={isAnswerLocked ? "outline" : "role"} loading={submitting} disabled={!activeQuestion || !selected.trim() || isAnswerLocked} onClick={handleSubmit}>
+            <Send size={18} />
+            {isRevealed ? "Answer locked" : isTimeExpired ? "Time ended" : hasSubmitted ? "Update answer" : "Submit answer"}
+          </Button>
         </DashboardCard>
       </div>
+      <Modal open={badgeOpen && Boolean(badgeQuestion)} title="Session Master Badge" onClose={() => setBadgeOpen(false)} panelClassName="max-w-md">
+        <div className="rounded-[18px] bg-role-hover p-5 text-center dark:bg-slate-950">
+          <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-role-primary text-white">
+            <Trophy size={24} />
+          </div>
+          <p className="mt-4 text-lg font-black text-slate-950 dark:text-white">{badgeQuestion?.badge_type || "Session Master"}</p>
+          <p className="mt-2 text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">You answered all questions correctly in this session.</p>
+        </div>
+      </Modal>
     </div>
   );
 }

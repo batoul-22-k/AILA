@@ -14,6 +14,7 @@ import { AppearanceSettingsPage } from "./pages/instructor/AppearanceSettingsPag
 import { ContentStudioPage } from "./pages/instructor/ContentStudioPage";
 import { CreateLiveSessionPage } from "./pages/instructor/CreateLiveSessionPage";
 import { InstructorAnalyticsPage } from "./pages/instructor/InstructorAnalyticsPage";
+import { InstructorAtRiskStudentsPage } from "./pages/instructor/InstructorAtRiskStudentsPage";
 import { InstructorClassDetailPage } from "./pages/instructor/InstructorClassDetailPage";
 import { InstructorClassesPage } from "./pages/instructor/InstructorClassesPage";
 import { InstructorDashboardPage } from "./pages/instructor/InstructorDashboardPage";
@@ -80,6 +81,7 @@ export default function App() {
             <Route path="instructor/live" element={<LiveParticipationDashboardPage />} />
             <Route path="instructor/live/:sessionId" element={<LiveParticipationDashboardPage />} />
             <Route path="instructor/analytics" element={<InstructorAnalyticsPage />} />
+            <Route path="instructor/at-risk" element={<InstructorAtRiskStudentsPage />} />
             <Route path="instructor/settings" element={<Navigate to="/instructor/settings/appearance" replace />} />
             <Route path="instructor/settings/appearance" element={<AppearanceSettingsPage />} />
             <Route path="instructor/profile" element={<ProfilePage />} />

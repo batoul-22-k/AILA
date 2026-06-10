@@ -9,9 +9,11 @@ class Settings(BaseSettings):
     ollama_url: str = "http://localhost:11434/api/generate"
     ollama_model: str = "tinyllama"
     ollama_timeout_seconds: int = 600
-    ollama_prompt_chars: int = 3000
-    ollama_num_ctx: int = 2048
-    ollama_num_predict: int = 700
+    ollama_prompt_chars: int = 1800
+    ollama_num_ctx: int = 1024
+    ollama_num_predict: int = 280
+    ollama_num_gpu: int = 0
+    ollama_num_thread: int = 0
     storage_dir: str = "storage"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")

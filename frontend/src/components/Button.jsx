@@ -17,6 +17,7 @@ const sizes = {
   sm: "h-9 px-3 text-sm",
   md: "h-11 px-4 text-sm",
   lg: "h-12 px-5 text-base",
+  icon: "h-10 w-10 p-0 text-sm",
 };
 
 export function Button({ children, className, variant = "primary", size = "md", loading = false, ...props }) {
@@ -32,7 +33,7 @@ export function Button({ children, className, variant = "primary", size = "md", 
       {...props}
     >
       {loading && <Loader2 size={16} className="animate-spin" />}
-      {children}
+      {!(size === "icon" && loading) && children}
     </button>
   );
 }
