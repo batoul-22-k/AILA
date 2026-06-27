@@ -1,6 +1,5 @@
 import { BrainCircuit, CalendarClock } from "lucide-react";
 
-import { BloomSignalTooltip } from "../BloomSignalTooltip";
 import { DashboardCard } from "../DashboardCard";
 
 function formatDate(value) {
@@ -30,9 +29,9 @@ export function AdminPredictionOverview({ overview }) {
 
   const stats = [
     { label: "High-risk students", value: overview.high_risk_students_count || 0 },
-    { label: "Classes needing Bloom support", value: overview.weak_classes || 0, bloom: true },
+    { label: "Weak classes", value: overview.weak_classes || 0 },
     { label: "Decline classes", value: overview.engagement_decline_classes || 0 },
-    { label: "Prediction Confidence", value: `${Math.round(overview.prediction_confidence || 0)}%` },
+    { label: "Confidence", value: `${Math.round(overview.prediction_confidence || 0)}%` },
   ];
 
   return (
@@ -53,13 +52,10 @@ export function AdminPredictionOverview({ overview }) {
         </span>
       </div>
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         {stats.map((item) => (
           <div key={item.label} className="rounded-lg border border-role-border bg-white p-3 dark:border-slate-800 dark:bg-slate-950/40">
-            <p className="flex items-center gap-1 text-[11px] font-black uppercase text-slate-500">
-              {item.label}
-              {item.bloom && <BloomSignalTooltip />}
-            </p>
+            <p className="text-[11px] font-black uppercase text-slate-500">{item.label}</p>
             <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{item.value}</p>
           </div>
         ))}
