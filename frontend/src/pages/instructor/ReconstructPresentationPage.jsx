@@ -26,9 +26,9 @@ export function ReconstructPresentationPage() {
         session_code: savedSession?.session_code ?? null,
       });
       setResult(response);
-      showToast({ title: "PPTX ready", description: "The reconstructed presentation is ready to download.", tone: "success" });
+      showToast({ title: "Export ready", tone: "success" });
     } catch (err) {
-      showToast({ title: "Could not reconstruct presentation", description: err instanceof Error ? err.message : "Could not reconstruct presentation", tone: "error" });
+      showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : "Could not reconstruct presentation", tone: "error" });
     } finally {
       setLoading(false);
     }
@@ -37,24 +37,23 @@ export function ReconstructPresentationPage() {
   return (
     <div className="page-grid">
       <PageHeader
-        eyebrow="PowerPoint reconstruction"
-        title="Create engagement slide deck"
-        description="Approved questions are inserted into a clean PPTX deck, with a join-code slide added after the title slide."
+        title="Export Slides"
+        description="Create a PPTX from approved questions."
         tone="role"
       />
 
-      {!uploadId && <EmptyState title="Upload required" description="Upload lecture material before reconstructing a presentation." />}
-      {approvedQuestionIds.length === 0 && <EmptyState title="No approved questions" description="Approve at least one generated question before creating the PPTX." />}
+      {!uploadId && <EmptyState title="Upload required" description="Upload content first." />}
+      {approvedQuestionIds.length === 0 && <EmptyState title="No approved questions" description="Approve questions before exporting." />}
 
       <DashboardCard>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-lg font-black text-slate-900 dark:text-white">Ready to build</h2>
+            <h2 className="text-lg font-black text-slate-900 dark:text-white">Ready</h2>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{approvedQuestionIds.length} approved questions selected</p>
           </div>
           <Button type="button" variant="role" loading={loading} onClick={handleReconstruct} disabled={!uploadId || approvedQuestionIds.length === 0}>
             <FileSliders size={18} />
-            Generate PPTX
+            Export
           </Button>
         </div>
       </DashboardCard>
@@ -62,15 +61,15 @@ export function ReconstructPresentationPage() {
       {result && (
         <DashboardCard>
           <h2 className="text-lg font-black text-slate-900 dark:text-white">{result.filename}</h2>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">The reconstructed presentation is ready.</p>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Ready to download.</p>
           <a className="mt-5 inline-flex" href={getDownloadUrl(result.download_url)}>
             <Button type="button" variant="role">
               <Download size={18} />
-              Download PPTX
+              Download
             </Button>
           </a>
           <Link className="ml-3 inline-flex" to="/instructor/sessions">
-            <Button type="button" variant="outline">Create session</Button>
+            <Button type="button" variant="outline">Start</Button>
           </Link>
         </DashboardCard>
       )}

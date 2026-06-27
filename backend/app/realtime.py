@@ -1,6 +1,7 @@
 from collections import defaultdict
 
 from fastapi import WebSocket
+from fastapi.encoders import jsonable_encoder
 
 
 class SessionConnectionManager:
@@ -18,9 +19,10 @@ class SessionConnectionManager:
 
     async def broadcast(self, session_id: str, payload: dict) -> None:
         disconnected: list[WebSocket] = []
+        encoded_payload = jsonable_encoder(payload)
         for websocket in self.active_connections.get(session_id, set()):
             try:
-                await websocket.send_json(payload)
+                await websocket.send_json(encoded_payload)
             except RuntimeError:
                 disconnected.append(websocket)
 

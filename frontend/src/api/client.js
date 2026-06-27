@@ -122,6 +122,35 @@ export function createUser(payload) {
   });
 }
 
+export function previewInstitutionUsers() {
+  return request("/api/admin/institution-users/preview");
+}
+
+export function syncInstitutionAccounts(institutionIds) {
+  return request("/api/admin/accounts/sync", {
+    method: "POST",
+    body: JSON.stringify({ institution_ids: institutionIds }),
+  });
+}
+
+export function previewInstitutionSync() {
+  return request("/api/admin/institution-sync/preview");
+}
+
+export function applyInstitutionSync(institutionIds) {
+  return request("/api/admin/institution-sync/apply", {
+    method: "POST",
+    body: JSON.stringify({ institution_ids: institutionIds }),
+  });
+}
+
+export function createManualAccount(payload) {
+  return request("/api/admin/accounts/manual", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function deleteUser(userId) {
   return request(`/api/users/${userId}`, {
     method: "DELETE",
@@ -374,6 +403,19 @@ export function revealSessionQuestion(sessionId, questionId) {
   });
 }
 
+export function correctShortAnswerResponses(sessionId, questionId) {
+  return request(`/api/sessions/${sessionId}/questions/${questionId}/correct-short-answers`, {
+    method: "POST",
+  });
+}
+
+export function updateInstructorReview(responseId, payload) {
+  return request(`/api/responses/${responseId}/instructor-review`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function finishLiveSession(sessionId) {
   return request(`/api/sessions/${sessionId}/finish`, {
     method: "POST",
@@ -391,6 +433,76 @@ export function getStudentAnalytics(studentId) {
 export function getMyProgress(params = {}) {
   const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== "")).toString();
   return request(`/api/progress/me${query ? `?${query}` : ""}`);
+}
+
+function gamificationQuery(params = {}) {
+  return new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== "")).toString();
+}
+
+export function getGamificationProfile(params = {}) {
+  const query = gamificationQuery(params);
+  return request(`/api/gamification/me${query ? `?${query}` : ""}`);
+}
+
+export function getGamificationMissions(params = {}) {
+  const query = gamificationQuery(params);
+  return request(`/api/gamification/missions${query ? `?${query}` : ""}`);
+}
+
+export function claimGamificationMission(missionId) {
+  return request(`/api/gamification/missions/${missionId}/claim`, {
+    method: "POST",
+  });
+}
+
+export function getGamificationBadges(params = {}) {
+  const query = gamificationQuery(params);
+  return request(`/api/gamification/badges${query ? `?${query}` : ""}`);
+}
+
+export function getGamificationNotifications(options = {}) {
+  const query = gamificationQuery({
+    unread_only: options.unreadOnly,
+    limit: options.limit,
+  });
+  return request(`/api/gamification/notifications${query ? `?${query}` : ""}`);
+}
+
+export function markGamificationNotificationRead(notificationId) {
+  return request(`/api/gamification/notifications/${notificationId}/read`, {
+    method: "POST",
+  });
+}
+
+export function markAllGamificationNotificationsRead() {
+  return request("/api/gamification/notifications/read-all", {
+    method: "POST",
+  });
+}
+
+export function getGamificationSessionSummary(sessionId) {
+  return request(`/api/gamification/sessions/${sessionId}/summary`);
+}
+
+export function getGamificationHistory(params = {}) {
+  const query = gamificationQuery(params);
+  return request(`/api/gamification/history${query ? `?${query}` : ""}`);
+}
+
+export function getGamificationLeaderboard(params = {}) {
+  const query = gamificationQuery(params);
+  return request(`/api/gamification/leaderboard${query ? `?${query}` : ""}`);
+}
+
+export function getGamificationChallenges(params = {}) {
+  const query = gamificationQuery(params);
+  return request(`/api/gamification/challenges${query ? `?${query}` : ""}`);
+}
+
+export function claimGamificationChallenge(challengeId) {
+  return request(`/api/gamification/challenges/${challengeId}/claim`, {
+    method: "POST",
+  });
 }
 
 export function getClassAnalytics(classId) {
@@ -414,6 +526,30 @@ export function recalculateClassPredictions(classId) {
   });
 }
 
+export function runPredictionAnalysis(classId) {
+  return request(`/api/predictions/class/${classId}/run`, {
+    method: "POST",
+  });
+}
+
+export function getClassPredictionSummary(classId) {
+  return request(`/api/predictions/class/${classId}`);
+}
+
+export function getStudentPrediction(params = {}) {
+  const query = gamificationQuery(params);
+  return request(`/api/predictions/student${query ? `?${query}` : ""}`);
+}
+
+export function getAdminPredictionOverview() {
+  return request("/api/predictions/admin/overview");
+}
+
+export function getClassPredictionFeatures(classId, options = {}) {
+  const query = gamificationQuery({ refresh: options.refresh });
+  return request(`/api/predictions/features/class/${classId}${query ? `?${query}` : ""}`);
+}
+
 export function getLiveSessionQuestions(sessionId) {
   return request(`/api/sessions/${sessionId}/questions`);
 }
@@ -424,6 +560,45 @@ export function getInstructorDashboard() {
 
 export function getAdminDashboard() {
   return request("/api/admin/dashboard");
+}
+
+export function getAdminCommandCenter() {
+  return request("/api/admin/command-center");
+}
+
+export function getAdminAlerts() {
+  return request("/api/admin/alerts");
+}
+
+export function markAdminAlertReviewed(alertId) {
+  return request(`/api/admin/alerts/${alertId}/review`, {
+    method: "POST",
+  });
+}
+
+export function getAdminClassesMonitoring() {
+  return request("/api/admin/classes/monitoring");
+}
+
+export function getAdminInstructorsMonitoring() {
+  return request("/api/admin/instructors/monitoring");
+}
+
+export function getAdminRiskOverview() {
+  return request("/api/admin/risk-overview");
+}
+
+export function getAdminTrends() {
+  return request("/api/admin/trends");
+}
+
+export function listAdminSessions(options = {}) {
+  const query = options.activeOnly ? "?active_only=true" : "";
+  return request(`/api/admin/sessions${query}`);
+}
+
+export function getAdminSessionReport(sessionId) {
+  return request(`/api/admin/sessions/${sessionId}/report`);
 }
 
 export function getWebSocketUrl(sessionId) {

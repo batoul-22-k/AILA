@@ -1,4 +1,4 @@
-import { Loader2, Save, Sparkles } from "lucide-react";
+import { FileQuestion, Loader2, Save } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -23,9 +23,9 @@ export function GeneratedQuestionsPage() {
       const result = await generateInstructorQuestions({ upload_id: uploadId, extracted_text: extractedText });
       setQuestions(result);
       localStorage.setItem("instructorGeneratedQuestions", JSON.stringify(result));
-      showToast({ title: "Questions generated", description: `${result.length} questions are ready to review.`, tone: "success" });
+      showToast({ title: "Questions generated", tone: "success" });
     } catch (err) {
-      showToast({ title: "Question generation failed", description: err instanceof Error ? err.message : "Question generation failed", tone: "error" });
+      showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : "Question generation failed", tone: "error" });
     } finally {
       setLoading(false);
     }
@@ -37,9 +37,9 @@ export function GeneratedQuestionsPage() {
       const saved = await saveInstructorQuestions({ upload_id: uploadId, questions });
       setQuestions(saved);
       localStorage.setItem("instructorGeneratedQuestions", JSON.stringify(saved));
-      showToast({ title: "Generated questions saved", description: "Continue to review and approve them.", tone: "success" });
+      showToast({ title: "Saved", tone: "success" });
     } catch (err) {
-      showToast({ title: "Could not save generated questions", description: err instanceof Error ? err.message : "Could not save generated questions", tone: "error" });
+      showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : "Could not save generated questions", tone: "error" });
     } finally {
       setSaving(false);
     }
@@ -48,26 +48,25 @@ export function GeneratedQuestionsPage() {
   return (
     <div className="page-grid">
       <PageHeader
-        eyebrow="AI generation"
-        title="Generate engagement questions"
-        description="Uses extracted lecture text and Ollama/LLaMA 3.1 to produce MCQ and short-answer questions."
+        title="Questions"
+        description="Create questions from uploaded content."
         tone="role"
         action={
           <Button type="button" variant="role" loading={loading} onClick={handleGenerate} disabled={!uploadId && !extractedText}>
-            <Sparkles size={18} />
+            <FileQuestion size={18} />
             Generate
           </Button>
         }
       />
 
       {!uploadId && !extractedText && (
-        <EmptyState title="Upload lecture material first" description="The generation step needs extracted lecture text from a PPTX or PDF upload." />
+        <EmptyState title="Upload content first" description="Add lecture material to begin." />
       )}
 
       {loading && (
         <DashboardCard className="text-center">
           <Loader2 className="mx-auto animate-spin text-role-text" size={34} />
-          <p className="mt-3 text-sm font-bold text-slate-600 dark:text-slate-300">Ollama is generating structured questions...</p>
+          <p className="mt-3 text-sm font-bold text-slate-600 dark:text-slate-300">Generating questions...</p>
         </DashboardCard>
       )}
 
@@ -102,10 +101,10 @@ export function GeneratedQuestionsPage() {
         <div className="flex flex-col gap-3 sm:flex-row">
           <Button type="button" variant="role" loading={saving} onClick={handleSave}>
             <Save size={18} />
-            Save generated questions
+            Save
           </Button>
           <Link to="/instructor/questions">
-            <Button type="button" variant="outline">Review questions</Button>
+            <Button type="button" variant="outline">Review</Button>
           </Link>
         </div>
       )}

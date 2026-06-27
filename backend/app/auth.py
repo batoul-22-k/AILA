@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+import secrets
 from typing import Literal
 
 from fastapi import Depends, Header, HTTPException, status
@@ -8,6 +11,41 @@ from app.models import UserOut, WorkspaceOut
 from app.services import serialize_document
 
 SESSION_PREFIX = "aila-session:"
+PASSWORD_HASH_PREFIX = "pbkdf2_sha256"
+PASSWORD_HASH_ITERATIONS = 260000
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        PASSWORD_HASH_ITERATIONS,
+    ).hex()
+    return f"{PASSWORD_HASH_PREFIX}${PASSWORD_HASH_ITERATIONS}${salt}${digest}"
+
+
+def make_unusable_password_hash() -> str:
+    return hash_password(secrets.token_urlsafe(32))
+
+
+def verify_password(password: str, stored_hash: str | None) -> bool:
+    if not stored_hash:
+        return False
+    if stored_hash.startswith(f"{PASSWORD_HASH_PREFIX}$"):
+        try:
+            _, iterations, salt, digest = stored_hash.split("$", 3)
+            candidate = hashlib.pbkdf2_hmac(
+                "sha256",
+                password.encode("utf-8"),
+                salt.encode("utf-8"),
+                int(iterations),
+            ).hex()
+            return hmac.compare_digest(candidate, digest)
+        except (TypeError, ValueError):
+            return False
+    return hmac.compare_digest(stored_hash, password)
 
 
 def account_role_for_user(user: dict) -> str:
@@ -114,6 +152,27 @@ async def require_class_role(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"{role.title()} permission required for this class")
 
 
+async def require_account_class_role(
+    db: AsyncIOMotorDatabase,
+    user: dict,
+    class_id: str,
+    role: Literal["student", "instructor"],
+) -> None:
+    if account_role_for_user(user) != role:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"{role.title()} account required")
+
+    membership = await db[MongoCollections.class_memberships].find_one(
+        {
+            "class_id": class_id,
+            "user_id": user["user_id"],
+            "role": role,
+            "status": "active",
+        }
+    )
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"{role.title()} permission required for this class")
+
+
 async def require_any_class_role(
     db: AsyncIOMotorDatabase,
     user: dict,
@@ -138,5 +197,15 @@ def public_user(user: dict) -> UserOut:
         name=user["name"],
         email=user["email"],
         account_role=account_role_for_user(user),
+        global_role=user.get("global_role"),
+        full_name=user.get("full_name"),
+        institution_id=user.get("institution_id"),
+        department=user.get("department"),
+        class_id=user.get("class_id"),
+        class_name=user.get("class_name"),
+        is_active=user.get("is_active", True),
+        must_change_password=user.get("must_change_password", False),
+        created_by_sync=user.get("created_by_sync", False),
+        sync_source=user.get("sync_source"),
         created_at=user.get("created_at"),
     )

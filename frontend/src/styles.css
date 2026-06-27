@@ -3,23 +3,23 @@
 @tailwind utilities;
 
 :root {
-  --role-bg: #f4f5f4;
+  --role-bg: #f7fafa;
   --role-surface: #ffffff;
-  --role-primary: #2b7886;
-  --role-primary-strong: #245866;
-  --role-accent: #79d99c;
-  --role-secondary: #79d99c;
+  --role-primary: #2f7f8a;
+  --role-primary-strong: #245f68;
+  --role-accent: #72b7a2;
+  --role-secondary: #72b7a2;
   --role-info: #eaf8f0;
   --role-error: #ef6b6b;
   --role-soft: #eaf8f0;
-  --role-hover: #f8faf8;
-  --role-text: #101418;
-  --role-border: #e8ecea;
-  --role-glow: rgba(43, 120, 134, 0.14);
-  --role-radius: 28px;
-  --role-card-padding: 1.5rem;
-  --role-card-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
-  --role-card-border: rgba(15, 23, 42, 0.06);
+  --role-hover: #f2f7f7;
+  --role-text: #172b36;
+  --role-border: #e6ecef;
+  --role-glow: rgba(47, 127, 138, 0.12);
+  --role-radius: 20px;
+  --role-card-padding: 1rem;
+  --role-card-shadow: 0 10px 28px rgba(15, 23, 42, 0.045);
+  --role-card-border: rgba(23, 43, 54, 0.08);
   --role-pressed-shadow: none;
   --role-motion: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   --role-dark-soft: rgba(148, 163, 184, 0.16);
@@ -29,27 +29,26 @@
   --dusk-blue: #2b7886;
   --dusty-denim: #e8ecea;
   --alabaster-grey: #f4f5f4;
-  --color-bg: #f4f5f4;
+  --color-bg: #f7fafa;
   --color-surface: #ffffff;
-  --color-soft-surface: #f8faf8;
-  --color-primary: #2b7886;
-  --color-accent: #79d99c;
-  --color-success: #79d99c;
-  --color-warning: #f4b860;
-  --color-error: #ef6b6b;
-  --color-text: #101418;
-  --color-muted: #6b7280;
-  --color-border: #e8ecea;
-  --font-ui: Aptos, "Segoe UI Variable", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif;
-  --font-heading: "Aptos Display", Aptos, "Segoe UI Variable", "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif;
-  --radius-card: 28px;
-  --shadow-card: 0 18px 45px rgba(15, 23, 42, 0.08);
-  --spacing-section: 2rem;
-  --spacing-card: 1.25rem;
-  color: #101418;
-  background: #f4f5f4;
-  font-family:
-    "Plus Jakarta Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --color-soft-surface: #f2f7f7;
+  --color-primary: #2f7f8a;
+  --color-accent: #72b7a2;
+  --color-success: #5aa37a;
+  --color-warning: #d79b42;
+  --color-error: #d96a62;
+  --color-text: #172b36;
+  --color-muted: #64748b;
+  --color-border: #e6ecef;
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-heading: "Plus Jakarta Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --radius-card: 20px;
+  --shadow-card: 0 10px 28px rgba(15, 23, 42, 0.045);
+  --spacing-section: 1.25rem;
+  --spacing-card: 1rem;
+  color: #172b36;
+  background: #f7fafa;
+  font-family: var(--font-ui);
 }
 
 [data-theme="student"] {
@@ -141,18 +140,18 @@
 }
 
 [data-instructor-theme="soft-mint-dashboard"] {
-  --color-bg: #f4f5f4;
+  --color-bg: #f7fafa;
   --color-surface: #ffffff;
-  --color-soft-surface: #f8faf8;
-  --color-primary: #2b7886;
-  --color-accent: #79d99c;
-  --color-success: #79d99c;
-  --color-warning: #f4b860;
-  --color-error: #ef6b6b;
-  --color-text: #101418;
-  --color-muted: #6b7280;
-  --color-border: #e8ecea;
-  --shadow-card: 0 18px 45px rgba(15, 23, 42, 0.08);
+  --color-soft-surface: #f2f7f7;
+  --color-primary: #2f7f8a;
+  --color-accent: #72b7a2;
+  --color-success: #5aa37a;
+  --color-warning: #d79b42;
+  --color-error: #d96a62;
+  --color-text: #172b36;
+  --color-muted: #64748b;
+  --color-border: #e6ecef;
+  --shadow-card: 0 10px 28px rgba(15, 23, 42, 0.045);
 }
 
 [data-instructor-theme="academic-classic"] {
@@ -192,22 +191,10 @@
   --color-border: #dde5e3;
 }
 
-[data-instructor-theme="dark-academic"] {
-  --color-bg: #0f172a;
-  --color-surface: #1e293b;
-  --color-primary: #cbd5e1;
-  --color-accent: #d4a373;
-  --color-success: #84a98c;
-  --color-text: #f8fafc;
-  --color-border: #334155;
-  --color-muted: #cbd5e1;
-  --shadow-card: 0 18px 44px rgba(2, 6, 23, 0.26);
-}
-
 [data-density="comfortable"] {
-  --radius-card: 28px;
-  --spacing-section: 2rem;
-  --spacing-card: 1.5rem;
+  --radius-card: 20px;
+  --spacing-section: 1.25rem;
+  --spacing-card: 1rem;
 }
 
 [data-density="compact"] {
@@ -263,6 +250,11 @@ body {
   margin: 0;
   min-width: 320px;
   overflow-x: hidden;
+  font-family: var(--font-ui);
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 button,
@@ -270,6 +262,15 @@ input,
 textarea,
 select {
   font: inherit;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-heading);
 }
 
 .focus-ring {
@@ -289,6 +290,7 @@ select {
 }
 
 .role-shell,
+.role-content,
 .role-topbar,
 .role-sidebar,
 .role-main,
@@ -309,6 +311,7 @@ select {
 }
 
 .role-topbar {
+  z-index: 30;
   border-color: transparent;
   /*background: color-mix(in srgb, var(--role-bg) 84%, white 16%);*/
 }
@@ -320,30 +323,99 @@ select {
   border-color: var(--role-card-border);
   border-radius: var(--role-radius);
   background: color-mix(in srgb, var(--role-surface) 94%, transparent);
-  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.045);
+}
+
+.role-shell {
+  --sidebar-full-width: 18rem;
+  --sidebar-collapsed-width: 5.5rem;
+  --sidebar-gap: 1rem;
+}
+
+[data-role="admin"] .role-shell {
+  --sidebar-full-width: 19rem;
+}
+
+.role-content {
+  min-width: 0;
 }
 
 .role-sidebar {
-  width: 18rem;
+  width: var(--sidebar-collapsed-width);
 }
 
 .role-sidebar > div {
+  height: 100%;
   border: 1px solid var(--role-card-border);
-  border-radius: 32px;
-  background: color-mix(in srgb, var(--role-surface) 86%, transparent);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--role-surface) 94%, transparent);
   box-shadow: var(--role-card-shadow);
-  padding: 0.85rem;
+  overflow: hidden;
+  padding: 0.65rem;
 }
 
-[data-role="admin"] .role-sidebar {
-  width: 19rem;
+.role-sidebar nav {
+  min-height: 0;
+  padding-right: 0.1rem;
+}
+
+.role-sidebar .role-brand-card {
+  min-height: 3.5rem;
+}
+
+.role-sidebar .role-nav-label,
+.role-sidebar .role-brand-card p,
+.role-sidebar .role-brand-card > div {
+  display: none;
+}
+
+.role-sidebar nav a {
+  justify-content: center;
+}
+
+.role-sidebar .role-nav-group > div {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .role-content {
+    margin-left: calc(var(--sidebar-collapsed-width) + var(--sidebar-gap) + 1rem);
+  }
+}
+
+@media (min-width: 1024px) {
+  .role-sidebar {
+    width: var(--sidebar-full-width);
+  }
+
+  .role-sidebar > div {
+    padding: 0.75rem;
+  }
+
+  .role-sidebar .role-nav-label,
+  .role-sidebar .role-brand-card p,
+  .role-sidebar .role-brand-card > div {
+    display: block;
+  }
+
+  .role-sidebar nav a {
+    justify-content: flex-start;
+  }
+
+  .role-sidebar .role-nav-group > div {
+    display: grid;
+  }
+
+  .role-content {
+    margin-left: calc(var(--sidebar-full-width) + var(--sidebar-gap) + 1rem);
+  }
 }
 
 .adaptive-card {
   border-color: var(--role-card-border);
   border-radius: var(--role-radius);
   box-shadow: var(--role-card-shadow);
-  padding: var(--role-card-padding);
+  padding: var(--spacing-card);
 }
 
 .adaptive-card:not([data-surface="custom"]) {
@@ -418,22 +490,31 @@ select {
   color: var(--color-text);
 }
 
-[data-role="instructor"] .role-sidebar {
-  width: 17.5rem;
+[data-role="instructor"] .role-shell {
+  --sidebar-full-width: 17.5rem;
 }
 
-[data-role="instructor"][data-layout-style="collapsible-sidebar"] .role-sidebar {
-  width: 5.75rem;
+[data-role="instructor"][data-layout-style="collapsible-sidebar"] .role-shell {
+  --sidebar-full-width: 5.75rem;
 }
 
 [data-role="instructor"][data-layout-style="collapsible-sidebar"] .role-sidebar p,
 [data-role="instructor"][data-layout-style="collapsible-sidebar"] .role-sidebar .role-nav-label,
+[data-role="instructor"][data-layout-style="collapsible-sidebar"] .role-sidebar .role-brand-card > div,
 [data-role="instructor"][data-layout-style="collapsible-sidebar"] .role-sidebar .mt-auto {
   display: none;
 }
 
+[data-role="instructor"][data-layout-style="collapsible-sidebar"] .role-sidebar nav a {
+  justify-content: center;
+}
+
 [data-role="instructor"][data-layout-style="top-navigation"] .role-sidebar {
   display: none;
+}
+
+[data-role="instructor"][data-layout-style="top-navigation"] .role-content {
+  margin-left: 0;
 }
 
 [data-role="instructor"][data-density="compact"] .page-grid {
@@ -465,7 +546,7 @@ select {
 }
 
 .adaptive-button {
-  min-height: 2.75rem;
+  min-height: 2.5rem;
   border-radius: 999px;
   transition: var(--role-motion);
 }
@@ -509,19 +590,35 @@ select {
   gap: 1rem;
 }
 
+.admin-command-center {
+  --role-radius: 8px;
+  --spacing-card: 0.875rem;
+  gap: 1rem;
+}
+
+.admin-command-center .adaptive-card {
+  box-shadow: none;
+  border-color: rgba(15, 23, 42, 0.07);
+}
+
 .role-mobile-nav {
   display: none;
 }
 
 .page-grid {
-  @apply grid gap-4 sm:gap-5 lg:gap-6;
-  gap: var(--spacing-section);
+  @apply grid gap-4 sm:gap-4 lg:gap-5;
+  gap: min(var(--spacing-section), 1.25rem);
+}
+
+.page-transition {
+  animation: pageTransitionIn 220ms ease-out both;
+  will-change: opacity, transform;
 }
 
 [data-role="instructor"] .role-main,
 [data-role="admin"] .role-main,
 [data-role="student"] .role-main {
-  padding-top: 1.5rem;
+  padding-top: 1.25rem;
 }
 
 [data-role="instructor"] .role-topbar,
@@ -540,6 +637,22 @@ select {
 [data-role="admin"] .role-sidebar nav a,
 [data-role="student"] .role-sidebar nav a {
   border-radius: 999px;
+}
+
+[data-role="instructor"] .role-sidebar nav a[aria-current="page"],
+[data-role="admin"] .role-sidebar nav a[aria-current="page"],
+[data-role="student"] .role-sidebar nav a[aria-current="page"] {
+  background: color-mix(in srgb, var(--role-primary) 9%, var(--role-surface));
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.055);
+  color: var(--role-primary);
+}
+
+[data-role="instructor"] .role-sidebar nav a.role-nav-disabled,
+[data-role="admin"] .role-sidebar nav a.role-nav-disabled,
+[data-role="student"] .role-sidebar nav a.role-nav-disabled {
+  background: transparent;
+  box-shadow: none;
+  color: color-mix(in srgb, var(--role-text) 45%, transparent);
 }
 
 [data-role="instructor"] .text-slate-950,
@@ -580,6 +693,26 @@ select {
   animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+.aila-login-gradient {
+  animation: ailaGradientBreath 18s ease-in-out infinite alternate;
+}
+
+.aila-login-aura {
+  animation: ailaAuraShift 16s ease-in-out infinite alternate;
+}
+
+.aila-login-float {
+  animation: ailaFloat 9s ease-in-out infinite;
+}
+
+.aila-login-float-slow {
+  animation: ailaFloatSlow 13s ease-in-out infinite;
+}
+
+.aila-login-glow {
+  animation: ailaGlow 10s ease-in-out infinite alternate;
+}
+
 @keyframes float {
   0%,
   100% {
@@ -598,5 +731,69 @@ select {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes pageTransitionIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ailaGradientBreath {
+  from {
+    filter: saturate(1) brightness(1);
+    transform: scale(1);
+  }
+  to {
+    filter: saturate(1.08) brightness(1.04);
+    transform: scale(1.025);
+  }
+}
+
+@keyframes ailaAuraShift {
+  from {
+    opacity: 0.78;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(8px, -8px, 0);
+  }
+}
+
+@keyframes ailaFloat {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -10px;
+  }
+}
+
+@keyframes ailaFloatSlow {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 10px -8px;
+  }
+}
+
+@keyframes ailaGlow {
+  from {
+    opacity: 0.72;
+    filter: blur(1px);
+  }
+  to {
+    opacity: 0.96;
+    filter: blur(2px);
   }
 }

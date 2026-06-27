@@ -8,7 +8,6 @@ import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
 import { DashboardCard } from "../components/DashboardCard";
 import { Modal } from "../components/Modal";
-import { ThemeToggle } from "../components/ThemeToggle";
 import { useToast } from "../components/ToastProvider";
 import { getRoleThemeScope, roleMeta } from "../navigation";
 import { useAuth } from "../state/AuthContext";
@@ -120,7 +119,7 @@ export function WorkspaceSelectPage() {
     setRefreshing(true);
     try {
       await refreshSession();
-      showToast({ title: "Enrollments refreshed", description: "Your instructor-managed class list is up to date.", tone: "success" });
+      showToast({ title: "Enrollments refreshed", description: "Your institution-managed class list is up to date.", tone: "success" });
     } catch (err) {
       showToast({ title: "Could not refresh", description: err instanceof Error ? err.message : "Could not refresh enrollments", tone: "error" });
     } finally {
@@ -158,7 +157,6 @@ export function WorkspaceSelectPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <ThemeToggle />
             <Button type="button" variant="ghost" size="sm" aria-label="Notifications">
               <Bell size={17} />
             </Button>
@@ -213,12 +211,12 @@ export function WorkspaceSelectPage() {
         <section className="mx-auto grid min-h-[calc(100vh-8rem)] max-w-6xl content-center gap-6 py-8">
           <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
             <div>
-              <Badge tone="teal">Instructor managed</Badge>
+              <Badge tone="teal">Institution managed</Badge>
               <h1 className="mt-4 max-w-xl text-4xl font-black tracking-tight text-slate-950 dark:text-white sm:text-5xl">
                 Your classes will appear here.
               </h1>
               <p className="mt-4 max-w-lg text-base leading-7 text-slate-600 dark:text-slate-300">
-                Students are enrolled by instructors. When an instructor adds you to a class, refresh this page and enter your workspace.
+                Students are enrolled by the institution administrator or institution sync. When your enrollment is updated, refresh this page and enter your workspace.
               </p>
             </div>
 
@@ -239,10 +237,10 @@ export function WorkspaceSelectPage() {
                   <div className="min-w-0">
                     <h2 className="text-2xl font-black text-slate-950 dark:text-white">You are not enrolled in any class yet</h2>
                     <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
-                      Your instructor must add your account to a class before you can participate.
+                      An institution administrator must add your account to a class before you can participate.
                     </p>
                     <div className="mt-5 rounded-[22px] bg-role-hover p-4 text-sm leading-6 text-slate-600 dark:bg-slate-950/40 dark:text-slate-300">
-                      If you expected a class here, ask your instructor to enroll <span className="font-black text-slate-900 dark:text-white">{userEmail || userName}</span>, then refresh.
+                      If you expected a class here, ask your institution administrator to enroll <span className="font-black text-slate-900 dark:text-white">{userEmail || userName}</span>, then refresh.
                     </div>
                     <div className="mt-5 flex flex-col gap-3 sm:flex-row">
                       <Button type="button" size="lg" variant="role" loading={refreshing} onClick={handleRefresh}>
@@ -376,9 +374,8 @@ export function WorkspaceSelectPage() {
           <div className="flex items-center justify-between gap-4 rounded-[22px] bg-role-hover p-4 dark:bg-slate-950/40">
             <div>
               <p className="font-black text-slate-950 dark:text-white">Appearance</p>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Switch between light and dark mode.</p>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">The workspace uses the light AILA theme.</p>
             </div>
-            <ThemeToggle />
           </div>
         </Modal>
       </main>

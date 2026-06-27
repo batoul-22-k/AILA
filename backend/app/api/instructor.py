@@ -1,11 +1,12 @@
 from datetime import timedelta
+from hashlib import sha256
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.auth import get_current_user, require_any_class_role, require_class_role, user_id_from_token
+from app.auth import account_role_for_user, get_current_user, require_account_class_role, require_any_class_role, user_id_from_token
 from app.analytics_services import recalculate_class_analytics
 from app.database import MongoCollections, get_db
 from app.instructor_services import (
@@ -40,6 +41,23 @@ from app.services import delete_session_cascade, generate_unique_session_code, g
 router = APIRouter(prefix="/instructor", tags=["instructor"])
 
 
+def live_question_notification_id(user_id: str, session_id: str, question_id: str) -> str:
+    raw = f"{user_id}|{session_id}|{question_id}|live_question"
+    return f"notification_{sha256(raw.encode('utf-8')).hexdigest()[:20]}"
+
+
+async def require_instructor_account_with_any_class(db: AsyncIOMotorDatabase, user: dict) -> list[str]:
+    if account_role_for_user(user) != "instructor":
+        raise HTTPException(status_code=403, detail="Instructor account required")
+    return await require_any_class_role(db, user, "instructor")
+
+
+async def require_own_instructor_session(db: AsyncIOMotorDatabase, user: dict, session: dict) -> None:
+    await require_account_class_role(db, user, session["class_id"], "instructor")
+    if session.get("instructor_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Instructor permission required for your own session")
+
+
 @router.post("/uploads", response_model=InstructorUploadOut)
 async def upload_instructor_lecture(
     class_id: str = Form(...),
@@ -47,7 +65,7 @@ async def upload_instructor_lecture(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> InstructorUploadOut:
-    await require_class_role(db, user, class_id, "instructor")
+    await require_account_class_role(db, user, class_id, "instructor")
     upload_id = new_id("upload")
     filename = file.filename or "lecture-material"
     suffix = Path(filename).suffix.lower()
@@ -95,7 +113,7 @@ async def get_instructor_upload(
     upload = await db[MongoCollections.lecture_uploads].find_one({"upload_id": upload_id})
     if not upload:
         raise HTTPException(status_code=404, detail="Upload not found")
-    await require_class_role(db, user, upload["class_id"], "instructor")
+    await require_account_class_role(db, user, upload["class_id"], "instructor")
     return InstructorUploadOut(**serialize_document(upload))
 
 
@@ -105,13 +123,13 @@ async def generate_instructor_questions(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> list[InstructorQuestion]:
-    await require_any_class_role(db, user, "instructor")
+    await require_instructor_account_with_any_class(db, user)
     text = payload.extracted_text or ""
     if payload.upload_id:
         upload = await db[MongoCollections.lecture_uploads].find_one({"upload_id": payload.upload_id})
         if not upload:
             raise HTTPException(status_code=404, detail="Upload not found")
-        await require_class_role(db, user, upload["class_id"], "instructor")
+        await require_account_class_role(db, user, upload["class_id"], "instructor")
         text = upload.get("cleaned_text") or upload.get("extracted_text") or text
     if not text.strip():
         raise HTTPException(status_code=400, detail="No extracted text available for question generation.")
@@ -141,7 +159,7 @@ async def save_instructor_questions(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> list[InstructorQuestion]:
-    await require_any_class_role(db, user, "instructor")
+    await require_instructor_account_with_any_class(db, user)
     class_id = None
     lecture_text = ""
     if payload.upload_id:
@@ -150,7 +168,7 @@ async def save_instructor_questions(
             raise HTTPException(status_code=404, detail="Upload not found")
         class_id = upload["class_id"]
         lecture_text = upload.get("cleaned_text") or upload.get("extracted_text") or ""
-        await require_class_role(db, user, class_id, "instructor")
+        await require_account_class_role(db, user, class_id, "instructor")
     questions: list[InstructorQuestion] = []
     for question in payload.questions:
         question_payload = question.model_dump()
@@ -197,9 +215,9 @@ async def update_instructor_question(
     if not existing:
         raise HTTPException(status_code=404, detail="Question not found")
     if existing.get("class_id"):
-        await require_class_role(db, user, existing["class_id"], "instructor")
+        await require_account_class_role(db, user, existing["class_id"], "instructor")
     else:
-        await require_any_class_role(db, user, "instructor")
+        await require_instructor_account_with_any_class(db, user)
     updated = payload.model_copy(update={"question_id": question_id})
     result = await db[MongoCollections.generated_questions].update_one(
         {"question_id": question_id},
@@ -216,9 +234,9 @@ async def delete_instructor_question(
 ) -> dict:
     existing = await db[MongoCollections.generated_questions].find_one({"question_id": question_id})
     if existing and existing.get("class_id"):
-        await require_class_role(db, user, existing["class_id"], "instructor")
+        await require_account_class_role(db, user, existing["class_id"], "instructor")
     else:
-        await require_any_class_role(db, user, "instructor")
+        await require_instructor_account_with_any_class(db, user)
     await db[MongoCollections.generated_questions].delete_one({"question_id": question_id})
     await db[MongoCollections.approved_questions].delete_one({"question_id": question_id})
     return {"status": "deleted", "question_id": question_id}
@@ -234,9 +252,9 @@ async def approve_instructor_question(
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
     if question.get("class_id"):
-        await require_class_role(db, user, question["class_id"], "instructor")
+        await require_account_class_role(db, user, question["class_id"], "instructor")
     else:
-        await require_any_class_role(db, user, "instructor")
+        await require_instructor_account_with_any_class(db, user)
     clean = serialize_document(question)
     clean["status"] = "approved"
     approved = InstructorQuestion(**clean)
@@ -258,12 +276,12 @@ async def regenerate_instructor_question(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> InstructorQuestion:
-    await require_any_class_role(db, user, "instructor")
+    await require_instructor_account_with_any_class(db, user)
     text = ""
     if payload.upload_id:
         upload = await db[MongoCollections.lecture_uploads].find_one({"upload_id": payload.upload_id})
         if upload:
-            await require_class_role(db, user, upload["class_id"], "instructor")
+            await require_account_class_role(db, user, upload["class_id"], "instructor")
             text = upload.get("cleaned_text") or upload.get("extracted_text") or ""
     if not text:
         text = payload.question.question_text
@@ -291,13 +309,13 @@ async def list_instructor_questions(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> list[InstructorQuestion]:
-    class_ids = await require_any_class_role(db, user, "instructor")
+    class_ids = await require_instructor_account_with_any_class(db, user)
     query: dict = {}
     if upload_id:
         query["upload_id"] = upload_id
     elif class_id:
         if class_id not in class_ids:
-            await require_class_role(db, user, class_id, "instructor")
+            await require_account_class_role(db, user, class_id, "instructor")
         query["class_id"] = class_id
     else:
         query["$or"] = [{"class_id": {"$in": class_ids}}, {"class_id": None}, {"class_id": {"$exists": False}}]
@@ -315,9 +333,9 @@ async def reconstruct_instructor_presentation(
 ) -> ReconstructPresentationOut:
     upload = await db[MongoCollections.lecture_uploads].find_one({"upload_id": payload.upload_id})
     if upload:
-        await require_class_role(db, user, upload["class_id"], "instructor")
+        await require_account_class_role(db, user, upload["class_id"], "instructor")
     else:
-        await require_any_class_role(db, user, "instructor")
+        await require_instructor_account_with_any_class(db, user)
     rows = await db[MongoCollections.approved_questions].find({"question_id": {"$in": payload.question_ids}}).to_list(length=100)
     questions_by_id = {row["question_id"]: InstructorQuestion(**serialize_document(row)) for row in rows}
     questions = [questions_by_id[question_id] for question_id in payload.question_ids if question_id in questions_by_id]
@@ -358,7 +376,7 @@ async def download_reconstructed_presentation(
     row = await db["reconstructed_presentations"].find_one({"file_id": file_id})
     if not row:
         raise HTTPException(status_code=404, detail="Presentation not found")
-    await require_any_class_role(db, user, "instructor")
+    await require_instructor_account_with_any_class(db, user)
     return FileResponse(path=row["path"], filename=row["filename"])
 
 
@@ -368,7 +386,7 @@ async def create_instructor_session(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> InstructorSessionOut:
-    await require_class_role(db, user, payload.class_id, "instructor")
+    await require_account_class_role(db, user, payload.class_id, "instructor")
     class_doc = await db[MongoCollections.classes].find_one({"class_id": payload.class_id})
     if class_doc and class_doc.get("status", "active") in {"archived", "inactive"}:
         raise HTTPException(status_code=400, detail="Activate this class before creating a live session.")
@@ -404,15 +422,15 @@ async def create_instructor_session(
         class_id=payload.class_id,
         instructor_id=user["user_id"],
         question_ids=question_ids,
-        active_question_id=question_ids[0] if question_ids else None,
+        active_question_id=None,
         session_code=session_code,
         join_link=join_link,
         qr_code_base64=make_qr_base64(join_link),
         status=status,
         scheduled_for=scheduled_for,
-        question_started_at=started_at,
-        question_duration_seconds=180 if started_at else None,
-        question_ends_at=started_at + timedelta(seconds=180) if started_at else None,
+        question_started_at=None,
+        question_duration_seconds=None,
+        question_ends_at=None,
         revealed_question_ids=[],
         created_at=utc_now(),
     )
@@ -426,8 +444,10 @@ async def list_instructor_sessions(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> list[InstructorSessionOut]:
-    class_ids = await require_any_class_role(db, user, "instructor")
-    rows = await db[MongoCollections.sessions].find({"class_id": {"$in": class_ids}, "qr_code_base64": {"$exists": True}}).sort("created_at", -1).to_list(length=100)
+    class_ids = await require_instructor_account_with_any_class(db, user)
+    rows = await db[MongoCollections.sessions].find(
+        {"class_id": {"$in": class_ids}, "instructor_id": user["user_id"], "qr_code_base64": {"$exists": True}}
+    ).sort("created_at", -1).to_list(length=100)
     sessions = []
     for row in rows:
         clean = serialize_document(row)
@@ -448,13 +468,13 @@ async def get_instructor_session(
     row = await db[MongoCollections.sessions].find_one({"session_id": session_id})
     if not row:
         raise HTTPException(status_code=404, detail="Session not found")
-    await require_class_role(db, user, row["class_id"], "instructor")
+    await require_own_instructor_session(db, user, row)
     clean = serialize_document(row)
     if "qr_code_base64" not in clean:
         join_link = make_join_link(clean["session_code"])
         clean["join_link"] = join_link
         clean["qr_code_base64"] = make_qr_base64(join_link)
-    clean.setdefault("active_question_id", clean.get("question_ids", [None])[0] if clean.get("question_ids") else None)
+    clean.setdefault("active_question_id", None)
     clean.setdefault("revealed_question_ids", [])
     clean.setdefault("question_started_at", None)
     clean.setdefault("question_duration_seconds", None)
@@ -471,7 +491,7 @@ async def delete_instructor_session(
     row = await db[MongoCollections.sessions].find_one({"session_id": session_id})
     if not row:
         raise HTTPException(status_code=404, detail="Session not found")
-    await require_class_role(db, user, row["class_id"], "instructor")
+    await require_own_instructor_session(db, user, row)
 
     result = await delete_session_cascade(db, row)
     await manager.broadcast(session_id, {"type": "session_deleted", "payload": {"session_id": session_id}})
@@ -489,7 +509,7 @@ async def update_instructor_session_status(
     row = await db[MongoCollections.sessions].find_one({"session_id": session_id})
     if not row:
         raise HTTPException(status_code=404, detail="Session not found")
-    await require_class_role(db, user, row["class_id"], "instructor")
+    await require_own_instructor_session(db, user, row)
     if payload.status == "active":
         class_doc = await db[MongoCollections.classes].find_one({"class_id": row["class_id"]})
         if class_doc and class_doc.get("status", "active") in {"archived", "inactive"}:
@@ -504,7 +524,7 @@ async def update_instructor_session_status(
         join_link = make_join_link(clean["session_code"])
         clean["join_link"] = join_link
         clean["qr_code_base64"] = make_qr_base64(join_link)
-    clean.setdefault("active_question_id", clean.get("question_ids", [None])[0] if clean.get("question_ids") else None)
+    clean.setdefault("active_question_id", None)
     clean.setdefault("revealed_question_ids", [])
     clean.setdefault("question_started_at", None)
     clean.setdefault("question_duration_seconds", None)
@@ -522,13 +542,16 @@ async def update_instructor_active_question(
     row = await db[MongoCollections.sessions].find_one({"session_id": session_id})
     if not row:
         raise HTTPException(status_code=404, detail="Session not found")
-    await require_class_role(db, user, row["class_id"], "instructor")
+    await require_own_instructor_session(db, user, row)
     if payload.question_id not in row.get("question_ids", []):
         raise HTTPException(status_code=400, detail="Question is not part of this session")
 
     started_at = utc_now()
-    duration_seconds = min(max(int(payload.duration_seconds or row.get("question_duration_seconds") or 180), 15), 3600)
-    ends_at = started_at + timedelta(seconds=duration_seconds)
+    duration_seconds = None
+    ends_at = None
+    if payload.duration_seconds is not None:
+        duration_seconds = min(max(int(payload.duration_seconds), 15), 3600)
+        ends_at = started_at + timedelta(seconds=duration_seconds)
     await db[MongoCollections.sessions].update_one(
         {"session_id": session_id},
         {
@@ -558,24 +581,30 @@ async def update_instructor_active_question(
         {"class_id": row["class_id"], "role": "student", "status": "active"},
         {"user_id": 1},
     ).to_list(length=None)
-    notification_rows = [
-        {
-            "notification_id": new_id("notification"),
-            "user_id": membership["user_id"],
-            "title": "New live question",
-            "description": "A new question is active.",
-            "tone": "info",
-            "read": False,
-            "class_id": row["class_id"],
-            "session_id": session_id,
-            "question_id": payload.question_id,
-            "created_at": utc_now(),
-        }
-        for membership in memberships
-        if membership.get("user_id")
-    ]
-    if notification_rows:
-        await db[MongoCollections.notifications].insert_many(notification_rows)
+    notification_created_at = utc_now()
+    for membership in memberships:
+        student_id = membership.get("user_id")
+        if not student_id:
+            continue
+        notification_id = live_question_notification_id(student_id, session_id, payload.question_id)
+        await db[MongoCollections.notifications].update_one(
+            {"notification_id": notification_id},
+            {
+                "$setOnInsert": {
+                    "notification_id": notification_id,
+                    "user_id": student_id,
+                    "title": "New live question",
+                    "description": "A new question is active.",
+                    "tone": "info",
+                    "read": False,
+                    "class_id": row["class_id"],
+                    "session_id": session_id,
+                    "question_id": payload.question_id,
+                    "created_at": notification_created_at,
+                }
+            },
+            upsert=True,
+        )
 
     stats = await get_live_session_stats(db, session_id)
     question_payload = {
@@ -583,7 +612,7 @@ async def update_instructor_active_question(
         "question_id": payload.question_id,
         "question_started_at": started_at.isoformat(),
         "question_duration_seconds": duration_seconds,
-        "question_ends_at": ends_at.isoformat(),
+        "question_ends_at": ends_at.isoformat() if ends_at else None,
         "message": "A new question is active",
         "stats": stats.model_dump(mode="json"),
     }
@@ -596,9 +625,12 @@ async def update_instructor_active_question(
                 "question_id": payload.question_id,
                 "question_started_at": started_at.isoformat(),
                 "question_duration_seconds": duration_seconds,
-                "question_ends_at": ends_at.isoformat(),
+                "question_ends_at": ends_at.isoformat() if ends_at else None,
                 "stats": stats.model_dump(mode="json"),
             },
         },
     )
     return InstructorSessionOut(**clean)
+
+
+

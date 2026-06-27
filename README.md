@@ -72,6 +72,35 @@ Health check: `http://localhost:8000/health`
 
 API docs: `http://localhost:8000/docs`
 
+### Development Demo Analytics Data
+
+For a clean demo dataset:
+
+```bash
+export ENV=development
+DEMO_RESET_FULL=true python backend/app/scripts/reset_demo_data.py
+python backend/app/scripts/seed_demo_learning_activity.py
+```
+
+Equivalent one-liner:
+
+```bash
+ENV=development DEMO_RESET_FULL=true python backend/app/scripts/reset_demo_data.py
+ENV=development python backend/app/scripts/seed_demo_learning_activity.py
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:ENV="development"; $env:DEMO_RESET_FULL="true"; python backend/app/scripts/reset_demo_data.py
+$env:DEMO_RESET_FULL=$null
+$env:ENV="development"; python backend/app/scripts/seed_demo_learning_activity.py
+```
+
+Normal reset removes only records tagged with `seed_source: "demo_learning_activity"` or `demo: true` for `institution_id: "demo_institution"`. Full reset (`DEMO_RESET_FULL=true`) also removes explicitly demo-marked institution classes, non-admin users, memberships, sessions, responses, analytics, and predictions.
+
+Both reset and seed scripts refuse to run unless `ENV=development` or `DEMO_SEED=true`. The seeder writes demo-tagged sessions, participation, responses, questions, and metadata, then runs the normal analytics/prediction pipeline. It never runs automatically in production.
+
 ## Frontend Setup
 
 ```bash

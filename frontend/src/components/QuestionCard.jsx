@@ -1,4 +1,4 @@
-import { CheckCircle2, Edit3, Sparkles } from "lucide-react";
+import { CheckCircle2, Edit3, FileQuestion } from "lucide-react";
 
 import { Badge } from "./Badge";
 import { Button } from "./Button";
@@ -15,7 +15,7 @@ export function QuestionCard({
   prompt,
   options = [],
   type = "MCQ",
-  status = "AI Draft",
+  status = "Draft",
   onSelect,
   selected,
   showActions = status !== "Live",
@@ -30,8 +30,8 @@ export function QuestionCard({
       <div className="border-b border-role-border bg-role-hover/60 p-4 dark:border-slate-800 dark:bg-slate-950/60 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[18px] bg-white text-role-accent shadow-sm dark:bg-slate-900 dark:text-violet-100">
-              <Sparkles size={18} />
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-white text-role-primary shadow-sm dark:bg-slate-900 dark:text-role-primary">
+              <FileQuestion size={18} />
             </span>
             <div className="min-w-0">
               <h3 className="truncate font-black text-slate-950 dark:text-white">{title}</h3>

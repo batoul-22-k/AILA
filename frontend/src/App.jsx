@@ -8,8 +8,7 @@ import { AdminDashboardPage } from "./pages/admin/AdminDashboardPage";
 import { AtRiskPage } from "./pages/admin/AtRiskPage";
 import { ClassesOverviewPage } from "./pages/admin/ClassesOverviewPage";
 import { EngagementTrendsPage } from "./pages/admin/EngagementTrendsPage";
-import { InstructorClassComparisonPage } from "./pages/admin/InstructorClassComparisonPage";
-import { PredictionReportsPage } from "./pages/admin/PredictionReportsPage";
+import { AdminEducationalAnalyticsPage, AdminEducationalPredictionsPage, AdminPredictionReportsPage, PredictionReportsPage } from "./pages/admin/PredictionReportsPage";
 import { AppearanceSettingsPage } from "./pages/instructor/AppearanceSettingsPage";
 import { ContentStudioPage } from "./pages/instructor/ContentStudioPage";
 import { CreateLiveSessionPage } from "./pages/instructor/CreateLiveSessionPage";
@@ -20,9 +19,12 @@ import { InstructorClassesPage } from "./pages/instructor/InstructorClassesPage"
 import { InstructorDashboardPage } from "./pages/instructor/InstructorDashboardPage";
 import { LiveParticipationDashboardPage } from "./pages/instructor/LiveParticipationDashboardPage";
 import { SessionCodePage } from "./pages/instructor/SessionCodePage";
+import { AchievementsPage } from "./pages/student/AchievementsPage";
 import { ActiveQuestionPage } from "./pages/student/ActiveQuestionPage";
 import { JoinSessionPage } from "./pages/student/JoinSessionPage";
+import { LeaderboardPage } from "./pages/student/LeaderboardPage";
 import { PersonalProgressPage } from "./pages/student/PersonalProgressPage";
+import { SessionRewardsPage } from "./pages/student/SessionRewardsPage";
 import { StudentDashboardPage } from "./pages/student/StudentDashboardPage";
 import { SubmissionSuccessPage } from "./pages/student/SubmissionSuccessPage";
 import { SubmitAnswerPage } from "./pages/student/SubmitAnswerPage";
@@ -33,9 +35,10 @@ import { useAuth } from "./state/AuthContext";
 import { useCurrentWorkspace } from "./state/WorkspaceContext";
 
 function HomeRoute() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const { currentWorkspace } = useCurrentWorkspace();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!currentWorkspace && ["admin", "instructor"].includes(user?.account_role)) return <Navigate to={`/${user.account_role}`} replace />;
   return currentWorkspace ? <Navigate to={`/${currentWorkspace.type}`} replace /> : <Navigate to="/workspace-select" replace />;
 }
 
@@ -58,6 +61,9 @@ export default function App() {
             <Route path="student/submit-answer" element={<SubmitAnswerPage />} />
             <Route path="student/success" element={<SubmissionSuccessPage />} />
             <Route path="student/progress" element={<PersonalProgressPage />} />
+            <Route path="student/achievements" element={<AchievementsPage />} />
+            <Route path="student/leaderboard" element={<LeaderboardPage />} />
+            <Route path="student/rewards" element={<SessionRewardsPage />} />
             <Route path="student/settings" element={<Navigate to="/student/settings/appearance" replace />} />
             <Route path="student/settings/appearance" element={<AppearanceSettingsPage />} />
             <Route path="student/profile" element={<ProfilePage />} />
@@ -93,11 +99,15 @@ export default function App() {
             <Route path="admin" element={<AdminDashboardPage />} />
             <Route path="admin/accounts" element={<AdminAccountsPage />} />
             <Route path="admin/classes" element={<ClassesOverviewPage />} />
-            <Route path="admin/instructors" element={<InstructorClassComparisonPage />} />
-            <Route path="admin/comparison" element={<InstructorClassComparisonPage />} />
+            <Route path="admin/instructors" element={<Navigate to="/admin/classes" replace />} />
+            <Route path="admin/comparison" element={<Navigate to="/admin/classes" replace />} />
             <Route path="admin/trends" element={<EngagementTrendsPage />} />
             <Route path="admin/students" element={<AtRiskPage />} />
             <Route path="admin/risk" element={<AtRiskPage />} />
+            <Route path="admin/insights" element={<Navigate to="/admin/insights/analytics" replace />} />
+            <Route path="admin/insights/analytics" element={<AdminEducationalAnalyticsPage />} />
+            <Route path="admin/insights/predictions" element={<AdminEducationalPredictionsPage />} />
+            <Route path="admin/insights/reports" element={<AdminPredictionReportsPage />} />
             <Route path="admin/reports" element={<PredictionReportsPage />} />
             <Route path="admin/settings" element={<Navigate to="/admin/settings/appearance" replace />} />
             <Route path="admin/settings/appearance" element={<AppearanceSettingsPage />} />

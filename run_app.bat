@@ -17,18 +17,6 @@ if not exist "frontend\.env" if exist "frontend\.env.example" (
   copy "frontend\.env.example" "frontend\.env" >nul
 )
 
-where docker >nul 2>nul
-if %ERRORLEVEL%==0 (
-  echo Starting MongoDB with Docker Compose...
-  docker compose up -d mongo
-) else (
-  echo Docker was not found. Make sure MongoDB is running at mongodb://localhost:27017.
-)
-
-if not exist "backend\.venv\Scripts\python.exe" (
-  echo Creating backend virtual environment...
-  py -3 -m venv "backend\.venv" || python -m venv "backend\.venv"
-)
 
 if not exist "backend\.venv\Scripts\python.exe" (
   echo Could not create backend virtual environment. Install Python 3.11+ and try again.
@@ -36,13 +24,6 @@ if not exist "backend\.venv\Scripts\python.exe" (
   exit /b 1
 )
 
-echo Installing/checking backend dependencies...
-call "backend\.venv\Scripts\python.exe" -m pip install -r "backend\requirements.txt"
-if errorlevel 1 (
-  echo Backend dependency installation failed.
-  pause
-  exit /b 1
-)
 
 if not exist "frontend\node_modules" (
   echo Installing frontend dependencies...

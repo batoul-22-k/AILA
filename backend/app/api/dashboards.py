@@ -22,11 +22,14 @@ async def get_instructor_dashboard_data(
     class_ids = [membership["class_id"] for membership in memberships]
     classes = len(class_ids)
     active_sessions = await db[MongoCollections.sessions].count_documents(
-        {"class_id": {"$in": class_ids}, "status": "active"}
+        {"class_id": {"$in": class_ids}, "instructor_id": instructor_id, "status": "active"}
     )
     session_ids = [
         session["session_id"]
-        async for session in db[MongoCollections.sessions].find({"class_id": {"$in": class_ids}}, {"session_id": 1})
+        async for session in db[MongoCollections.sessions].find(
+            {"class_id": {"$in": class_ids}, "instructor_id": instructor_id},
+            {"session_id": 1},
+        )
     ]
     total_responses = await db[MongoCollections.responses].count_documents({"session_id": {"$in": session_ids}})
     return DashboardSummary(

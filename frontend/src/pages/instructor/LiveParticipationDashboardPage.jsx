@@ -1,8 +1,8 @@
-import { Activity, CheckCircle2, ChevronLeft, ChevronRight, Copy, Eye, Flag, HelpCircle, Layers, MessageCircle, Play, QrCode, Search, Timer, UsersRound } from "lucide-react";
+import { Activity, AlertCircle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Copy, Eye, Layers, MessageCircle, Play, QrCode, RefreshCw, Search, Timer, UsersRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
-import { finishLiveSession, getInstructorSession, getLiveSessionQuestions, getLiveSessionResponseDetails, getLiveSessionStats, getWebSocketUrl, revealSessionQuestion, updateInstructorActiveQuestion } from "../../api/client";
+import { correctShortAnswerResponses, finishLiveSession, getInstructorSession, getLiveSessionQuestions, getLiveSessionResponseDetails, getLiveSessionStats, getWebSocketUrl, revealSessionQuestion, updateInstructorActiveQuestion, updateInstructorReview } from "../../api/client";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { EmptyState } from "../../components/EmptyState";
@@ -10,6 +10,548 @@ import { Modal } from "../../components/Modal";
 import { useToast } from "../../components/ToastProvider";
 
 const PLACEHOLDER_ANSWERS = ["A", "B", "C", "D"];
+
+function formatTime(seconds) {
+  const minutes = Math.floor(seconds / 60).toString().padStart(2, "0");
+  const remainder = (seconds % 60).toString().padStart(2, "0");
+  return `${minutes}:${remainder}`;
+}
+
+function secondsUntil(value) {
+  if (!value) return 0;
+  const normalizedValue = typeof value === "string" && !/[zZ]|[+-]\d{2}:\d{2}$/.test(value) ? `${value}Z` : value;
+  const endTime = new Date(normalizedValue).getTime();
+  if (Number.isNaN(endTime)) return 0;
+  return Math.max(Math.ceil((endTime - Date.now()) / 1000), 0);
+}
+
+function getSessionStatusTone(status) {
+  if (status === "active") return "green";
+  if (status === "scheduled") return "gold";
+  if (status === "finished") return "emerald";
+  return "slate";
+}
+
+function getSessionStatusLabel(status) {
+  if (status === "active") return "Active";
+  if (status === "scheduled") return "Scheduled";
+  if (status === "closed") return "Stopped";
+  if (status === "finished") return "Finished";
+  return status || "Unknown";
+}
+
+function PerfectMetricIndicator({ className = "" }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 text-sm font-black text-emerald-700 dark:text-emerald-100 ${className}`}
+      title="Perfect score"
+      aria-label="100%. Perfect score"
+    >
+      <CheckCircle2 size={15} className="text-emerald-500 dark:text-emerald-300" />
+      100%
+    </span>
+  );
+}
+
+function ZeroMetricIndicator({ className = "" }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 text-sm font-black text-red-700 dark:text-red-100 ${className}`}
+      title="No activity recorded"
+      aria-label="0%. No activity recorded"
+    >
+      <AlertCircle size={15} className="text-red-400 dark:text-red-300" />
+      0%
+    </span>
+  );
+}
+
+function MetricProgressLine({ percentage, barClass = "bg-role-primary" }) {
+  if (percentage >= 100) {
+    return <PerfectMetricIndicator className="mt-3" />;
+  }
+  if (percentage <= 0) {
+    return <ZeroMetricIndicator className="mt-3" />;
+  }
+  return (
+    <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+      <div className={`h-full ${barClass}`} style={{ width: `${percentage}%` }} />
+    </div>
+  );
+}
+
+function studentCountLabel(count) {
+  return `${count} student${count === 1 ? "" : "s"}`;
+}
+
+function getCorrectAnswerDisplay(question) {
+  if (!question?.correct_answer) return "Not set";
+  const correctAnswer = String(question.correct_answer).trim();
+  const optionIndex = question.options?.findIndex((option) => option.trim().toLowerCase() === correctAnswer.toLowerCase()) ?? -1;
+  if (optionIndex >= 0) return `${String.fromCharCode(65 + optionIndex)}. ${question.options[optionIndex]}`;
+  if (/^[A-Z]$/i.test(correctAnswer) && question.options?.length) {
+    const index = correctAnswer.toUpperCase().charCodeAt(0) - 65;
+    if (question.options[index]) return `${correctAnswer.toUpperCase()}. ${question.options[index]}`;
+  }
+  return correctAnswer;
+}
+
+function isCorrectAnswerOption(question, answer, fallbackIndex) {
+  if (!question?.correct_answer) return false;
+  const correctAnswer = String(question.correct_answer).trim();
+  const normalizedAnswer = String(answer).trim();
+  const option = question.options?.[fallbackIndex]?.trim() || "";
+  return (
+    normalizedAnswer.toLowerCase() === correctAnswer.toLowerCase()
+    || option.toLowerCase() === correctAnswer.toLowerCase()
+    || (/^[A-Z]$/i.test(correctAnswer) && normalizedAnswer.toUpperCase() === correctAnswer.toUpperCase())
+  );
+}
+
+function InstructorReviewPanel({ student, saving, onSave }) {
+  const aiEvaluation = student.aiEvaluation || {};
+  const review = student.instructorReview || {};
+  const initialScore = Math.round(((review.reviewed ? review.finalScore : aiEvaluation.finalScore) ?? student.semantic_score ?? 0) * 100);
+  const initialLabel = (review.reviewed ? review.finalLabel : aiEvaluation.label) || student.semantic_label || "incorrect";
+  const [score, setScore] = useState(initialScore);
+  const [label, setLabel] = useState(initialLabel);
+  const [feedback, setFeedback] = useState(review.feedback || "");
+  const [showToStudent, setShowToStudent] = useState(Boolean(review.showToStudent));
+  const aiScore = Math.round(((aiEvaluation.finalScore ?? student.semantic_score ?? 0) || 0) * 100);
+  const aiLabel = aiEvaluation.label || student.semantic_label || "incorrect";
+
+  function acceptAi() {
+    setScore(aiScore);
+    setLabel(aiLabel);
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/60">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Instructor review</p>
+        <button type="button" className="text-xs font-bold text-role-primary hover:underline" onClick={acceptAi}>
+          Accept AI
+        </button>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-[7rem_9rem_minmax(0,1fr)]">
+        <label className="grid gap-1 text-xs font-bold text-slate-500 dark:text-slate-400">
+          Score
+          <input
+            className="adaptive-input focus-ring h-9 rounded-lg border border-role-border px-2 text-sm dark:border-slate-800"
+            type="number"
+            min="0"
+            max="100"
+            value={score}
+            onChange={(event) => setScore(Math.max(0, Math.min(100, Number(event.target.value || 0))))}
+          />
+        </label>
+        <label className="grid gap-1 text-xs font-bold text-slate-500 dark:text-slate-400">
+          Label
+          <select
+            className="adaptive-input focus-ring h-9 rounded-lg border border-role-border px-2 text-sm dark:border-slate-800"
+            value={label}
+            onChange={(event) => setLabel(event.target.value)}
+          >
+            <option value="correct">Correct</option>
+            <option value="partial">Partial</option>
+            <option value="incorrect">Needs review</option>
+          </select>
+        </label>
+        <label className="grid gap-1 text-xs font-bold text-slate-500 dark:text-slate-400">
+          Feedback
+          <textarea
+            className="adaptive-input focus-ring min-h-9 rounded-lg border border-role-border px-2 py-2 text-sm dark:border-slate-800"
+            value={feedback}
+            onChange={(event) => setFeedback(event.target.value)}
+            placeholder="Optional feedback"
+          />
+        </label>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-slate-300 text-role-primary"
+            checked={showToStudent}
+            onChange={(event) => setShowToStudent(event.target.checked)}
+          />
+          Show to student
+        </label>
+        <Button
+          type="button"
+          size="sm"
+          variant="role"
+          loading={saving}
+          disabled={!student.response_id}
+          onClick={() => onSave(student.response_id, {
+            finalScore: Number(score || 0) / 100,
+            finalLabel: label,
+            feedback,
+            showToStudent,
+          })}
+        >
+          Save
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function responseResult(student) {
+  if (student.status === "not_answered") {
+    return {
+      label: "Not Answered",
+      className: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-200",
+    };
+  }
+  if (student.is_correct === true) {
+    return {
+      label: "Correct",
+      className: "bg-emerald-50 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-100",
+    };
+  }
+  if (student.semantic_label === "partial") {
+    return {
+      label: "Partial",
+      className: "bg-amber-50 text-amber-700 dark:bg-amber-400/10 dark:text-amber-100",
+    };
+  }
+  return {
+    label: "Needs Review",
+    className: "bg-rose-50 text-rose-700 dark:bg-rose-400/10 dark:text-rose-100",
+  };
+}
+
+function semanticLabelDisplay(label) {
+  if (label === "correct") return "Correct";
+  if (label === "partial") return "Partial";
+  if (label === "incorrect") return "Needs Review";
+  return "Not evaluated";
+}
+
+function responseMatch(student) {
+  if (typeof student.semantic_score === "number") return Math.round(student.semantic_score * 100);
+  if (student.status === "not_answered") return null;
+  if (student.is_correct === true) return 100;
+  if (student.is_correct === false) return 0;
+  return null;
+}
+
+function responseAnswerText(student) {
+  if (student.status === "not_answered") return "No answer submitted.";
+  const answer = String(student.selected_answer ?? "").trim();
+  return answer || "Answer unavailable.";
+}
+
+function responseEngineLabel(engine) {
+  if (!engine) return "Not evaluated";
+  if (engine.includes("sentence-transformers") || engine === "embedding") return "Semantic check";
+  if (engine === "empty") return "Empty answer";
+  return "Lexical check";
+}
+
+function ResponseSummary({ summary, fallback }) {
+  const responseRate = summary?.response_rate ?? fallback.responseRate;
+  const answered = summary?.answered ?? fallback.answered;
+  const total = summary?.total_students ?? fallback.total;
+  const correct = summary?.correct ?? fallback.correct;
+  const partial = summary?.partial ?? fallback.partial;
+  const needsReview = summary?.incorrect ?? fallback.needsReview;
+  const notAnswered = summary?.not_answered ?? fallback.notAnswered;
+
+  return (
+    <div className="rounded-xl border border-slate-100 bg-white px-3 py-2.5 dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+        <span className="font-semibold text-slate-500 dark:text-slate-400">Response Rate</span>
+        <span className="text-lg font-semibold tracking-tight text-slate-950 dark:text-white">{responseRate}%</span>
+        <span className="h-4 w-px bg-slate-200 dark:bg-slate-800" />
+        <span className="font-medium text-slate-500 dark:text-slate-400">{answered}/{total} answered</span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-2.5 gap-y-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
+        <span className="text-emerald-700 dark:text-emerald-100">Correct {correct}</span>
+        <span>·</span>
+        <span className="text-amber-700 dark:text-amber-100">Partial {partial}</span>
+        <span>·</span>
+        <span className="text-rose-700 dark:text-rose-100">Review {needsReview}</span>
+        <span>·</span>
+        <span>Waiting {notAnswered}</span>
+      </div>
+    </div>
+  );
+}
+
+function ResponseFilters({
+  status,
+  correctness,
+  search,
+  isShortAnswerQuestion,
+  onStatusChange,
+  onCorrectnessChange,
+  onSearchChange,
+}) {
+  return (
+    <div className="grid gap-2">
+      <label className="relative block">
+        <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+        <input
+          className="adaptive-input focus-ring h-10 w-full rounded-xl border border-role-border bg-white pl-9 pr-3 text-sm shadow-none dark:border-slate-800 dark:bg-slate-900"
+          value={search}
+          onChange={(event) => onSearchChange(event.target.value)}
+          placeholder="Search student or answer"
+        />
+      </label>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Status</span>
+        <div className="flex flex-wrap gap-1.5">
+          {[
+            ["all", "All"],
+            ["answered", "Answered"],
+            ["not_answered", "Waiting"],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={`rounded-full border px-2.5 py-1 text-xs font-semibold transition ${
+                status === value
+                  ? "border-role-primary bg-role-soft text-role-primary"
+                  : "border-role-border bg-white text-slate-500 hover:border-role-primary hover:text-role-primary dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
+              }`}
+              onClick={() => onStatusChange(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Result</span>
+        <div className="flex flex-wrap gap-1.5">
+          {[
+            ["", "All Results"],
+            ["correct", "Correct"],
+            ...(isShortAnswerQuestion ? [["partial", "Partial"]] : []),
+            ["incorrect", "Needs Review"],
+          ].map(([value, label]) => (
+            <button
+              key={value || "all-results"}
+              type="button"
+              disabled={status === "not_answered" && value !== ""}
+              className={`rounded-full border px-2.5 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                correctness === value
+                  ? "border-role-primary bg-role-soft text-role-primary"
+                  : "border-role-border bg-white text-slate-500 hover:border-role-primary hover:text-role-primary dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
+              }`}
+              onClick={() => onCorrectnessChange(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResponseDetails({ student, isShortAnswerQuestion, savingReviewId, onSaveReview, expanded }) {
+  if (!expanded) return null;
+  const match = responseMatch(student);
+
+  return (
+    <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-3 dark:border-slate-800 dark:bg-slate-950/50">
+      <div className="grid gap-2 text-xs text-slate-500 dark:text-slate-400">
+        <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
+          <p><span className="font-semibold text-slate-700 dark:text-slate-200">Student ID:</span> {student.student_id}</p>
+          <p><span className="font-semibold text-slate-700 dark:text-slate-200">Method:</span> {responseEngineLabel(student.semantic_engine)}</p>
+          {student.email && <p><span className="font-semibold text-slate-700 dark:text-slate-200">Email:</span> {student.email}</p>}
+          {student.confidence_level && <p><span className="font-semibold text-slate-700 dark:text-slate-200">Confidence:</span> {student.confidence_level}</p>}
+          {match !== null && <p><span className="font-semibold text-slate-700 dark:text-slate-200">Raw score:</span> {match}%</p>}
+          {student.aiEvaluation?.semanticSimilarity !== undefined && (
+            <p><span className="font-semibold text-slate-700 dark:text-slate-200">Semantic:</span> {Math.round(student.aiEvaluation.semanticSimilarity * 100)}%</p>
+          )}
+          {student.aiEvaluation?.conceptCoverage !== undefined && (
+            <p><span className="font-semibold text-slate-700 dark:text-slate-200">Concept match:</span> {Math.round(student.aiEvaluation.conceptCoverage * 100)}%</p>
+          )}
+          {student.aiEvaluation?.label && (
+            <p><span className="font-semibold text-slate-700 dark:text-slate-200">AI label:</span> {semanticLabelDisplay(student.aiEvaluation.label)}</p>
+          )}
+        </div>
+        {isShortAnswerQuestion && student.status === "answered" && (
+          <InstructorReviewPanel
+            key={`${student.response_id}:${student.instructorReview?.reviewedAt || ""}:${student.semantic_score ?? ""}`}
+            student={student}
+            saving={savingReviewId === student.response_id}
+            onSave={onSaveReview}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StudentResponseCard({ student, isShortAnswerQuestion, savingReviewId, onSaveReview, formatSubmittedAt }) {
+  const [expandedAnswer, setExpandedAnswer] = useState(false);
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const result = responseResult(student);
+  const match = responseMatch(student);
+  const answer = responseAnswerText(student);
+  const answerIsLong = answer.length > 150;
+
+  return (
+    <article className="rounded-2xl border border-slate-100 bg-white p-3 shadow-[0_6px_18px_rgba(15,23,42,0.03)] dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-950 dark:text-white">{student.student_name}</p>
+        </div>
+        <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold leading-none ${result.className}`}>
+          {result.label}
+        </span>
+      </div>
+
+      <div className="mt-2 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-950/50">
+        <p
+          className="break-words text-sm font-medium leading-5 text-slate-800 dark:text-slate-100"
+          style={expandedAnswer ? undefined : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}
+        >
+          "{answer}"
+        </p>
+        {answerIsLong && (
+          <button
+            type="button"
+            className="mt-1 text-xs font-semibold text-role-primary hover:underline"
+            onClick={() => setExpandedAnswer((current) => !current)}
+          >
+            {expandedAnswer ? "View less" : "View more"}
+          </button>
+        )}
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+        <span>Match: <span className="font-semibold text-slate-800 dark:text-slate-100">{match === null ? "—" : `${match}%`}</span></span>
+        <span>Submitted: <span className="font-semibold text-slate-800 dark:text-slate-100">{formatSubmittedAt(student.submitted_at)}</span></span>
+        <button
+          type="button"
+          className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-role-primary transition hover:text-role-primary-700"
+          onClick={() => setDetailsExpanded((current) => !current)}
+          aria-expanded={detailsExpanded}
+        >
+          {detailsExpanded ? "Hide" : "Details"}
+          <ChevronDown size={13} className={`transition-transform ${detailsExpanded ? "rotate-180" : ""}`} />
+        </button>
+      </div>
+
+      <ResponseDetails
+        student={student}
+        isShortAnswerQuestion={isShortAnswerQuestion}
+        savingReviewId={savingReviewId}
+        onSaveReview={onSaveReview}
+        expanded={detailsExpanded}
+      />
+    </article>
+  );
+}
+
+function responseEmptyMessage({ students, loading, status, search, summary }) {
+  if (loading || students.length > 0) return "";
+  if ((summary?.total_students ?? 0) === 0) return "No students found.";
+  if (search.trim()) return "No matching responses.";
+  if (status === "not_answered" && (summary?.answered ?? 0) === 0) return "All students are waiting.";
+  if ((summary?.answered ?? 0) === 0) return "No responses yet.";
+  return "No matching responses.";
+}
+
+function ResponsesPanel({
+  open,
+  title,
+  students,
+  summary,
+  fallback,
+  loading,
+  status,
+  correctness,
+  search,
+  isShortAnswerQuestion,
+  recalculating,
+  savingReviewId,
+  onClose,
+  onRecalculate,
+  onStatusChange,
+  onCorrectnessChange,
+  onSearchChange,
+  onSaveReview,
+  formatSubmittedAt,
+}) {
+  if (!open) return null;
+  const emptyMessage = responseEmptyMessage({ students, loading, status, search, summary });
+  const hasStudents = students.length > 0;
+  const showInitialLoading = loading && !hasStudents;
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-hidden overscroll-contain">
+      <button className="absolute inset-0 bg-slate-950/30 backdrop-blur-[2px]" type="button" aria-label="Close responses" onClick={onClose} />
+      <aside className="absolute right-0 top-0 flex h-screen w-full max-w-[700px] flex-col overflow-hidden overscroll-contain border-l border-role-border bg-[#F7FAFA] shadow-[0_24px_80px_rgba(15,23,42,0.16)] dark:border-slate-800 dark:bg-slate-950">
+        <div className="shrink-0 border-b border-role-border bg-white/95 px-5 py-4 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/95">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="min-w-0 truncate text-lg font-semibold text-slate-950 dark:text-white">{title}</h2>
+            <div className="flex shrink-0 items-center gap-2">
+              {isShortAnswerQuestion && (
+                <Button type="button" variant="outline" size="sm" loading={recalculating} onClick={onRecalculate}>
+                  Recalculate
+                </Button>
+              )}
+              <Button type="button" variant="ghost" size="sm" onClick={onClose}>Close</Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="sticky top-0 z-20 shrink-0 border-b border-role-border bg-[#F7FAFA]/95 px-4 py-3 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/95">
+          <div className="grid gap-2 rounded-2xl border border-slate-100 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <ResponseSummary summary={summary} fallback={fallback} />
+            <ResponseFilters
+              status={status}
+              correctness={correctness}
+              search={search}
+              isShortAnswerQuestion={isShortAnswerQuestion}
+              onStatusChange={onStatusChange}
+              onCorrectnessChange={onCorrectnessChange}
+              onSearchChange={onSearchChange}
+            />
+          </div>
+        </div>
+
+        <div className="pointer-events-none relative z-10 h-3 shrink-0 bg-gradient-to-b from-[#F7FAFA] to-transparent dark:from-slate-950" />
+        <div className="subtle-scroll min-h-0 flex-1 scroll-smooth overscroll-contain overflow-y-auto px-4 pb-8 pr-2" aria-busy={loading ? "true" : undefined}>
+          {showInitialLoading && (
+            <div className="rounded-2xl border border-slate-100 bg-white p-4 text-sm font-semibold text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+              Loading responses...
+            </div>
+          )}
+          {!loading && emptyMessage && (
+            <div className="rounded-2xl border border-slate-100 bg-white p-6 text-center text-sm font-semibold text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+              {emptyMessage}
+            </div>
+          )}
+          {hasStudents && (
+            <div className="grid gap-3">
+              {students.map((student) => (
+                <StudentResponseCard
+                  key={`${student.response_id || student.student_id}:${student.status}:${student.selected_answer || "none"}`}
+                  student={student}
+                  isShortAnswerQuestion={isShortAnswerQuestion}
+                  savingReviewId={savingReviewId}
+                  onSaveReview={onSaveReview}
+                  formatSubmittedAt={formatSubmittedAt}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="pointer-events-none h-4 shrink-0 bg-gradient-to-t from-[#F7FAFA] to-transparent dark:from-slate-950" />
+      </aside>
+    </div>
+  );
+}
 
 export function LiveParticipationDashboardPage() {
   const { showToast } = useToast();
@@ -20,8 +562,7 @@ export function LiveParticipationDashboardPage() {
   const [stats, setStats] = useState(null);
   const [activeQuestionId, setActiveQuestionId] = useState(() => {
     if (savedSession?.active_question_id) return savedSession.active_question_id;
-    if (!savedSession?.session_id) return localStorage.getItem("activeQuestionId") || "";
-    return localStorage.getItem(`activeQuestionId:${savedSession.session_id}`) || localStorage.getItem("activeQuestionId") || "";
+    return "";
   });
   const [chartQuestionIndex, setChartQuestionIndex] = useState(0);
   const [activatingQuestionId, setActivatingQuestionId] = useState("");
@@ -34,14 +575,15 @@ export function LiveParticipationDashboardPage() {
   const [detailsData, setDetailsData] = useState(null);
   const [liveQuestions, setLiveQuestions] = useState([]);
   const [revealingQuestionId, setRevealingQuestionId] = useState("");
+  const [correctingQuestionId, setCorrectingQuestionId] = useState("");
   const [finishingSession, setFinishingSession] = useState(false);
-  const [finishSummary, setFinishSummary] = useState(null);
   const [summaryPreviewData, setSummaryPreviewData] = useState({});
   const [summaryPreviewLoading, setSummaryPreviewLoading] = useState({});
+  const [savingReviewId, setSavingReviewId] = useState("");
   const [timerMinutes, setTimerMinutes] = useState(() => Math.round((savedSession?.question_duration_seconds || 180) / 60));
+  const [dashboardTimeLeft, setDashboardTimeLeft] = useState(() => secondsUntil(savedSession?.question_ends_at));
   const [timerModalOpen, setTimerModalOpen] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
-  const [leftPanelTab, setLeftPanelTab] = useState("questions");
 
   useEffect(() => {
     let isMounted = true;
@@ -58,10 +600,11 @@ export function LiveParticipationDashboardPage() {
           setSession(sessionResult);
           setStats(statsResult);
           setLiveQuestions(questionsResult);
+          setActiveQuestionId(sessionResult.active_question_id || "");
         }
       } catch (err) {
         if (showError && isMounted) {
-          showToast({ title: "Could not load live session", description: err instanceof Error ? err.message : "Could not load live session", tone: "error" });
+          showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : "Could not load live session", tone: "error" });
         }
       }
     }
@@ -94,18 +637,31 @@ export function LiveParticipationDashboardPage() {
                     ...current,
                     active_question_id: nextQuestionId,
                     question_started_at: message.payload?.question_started_at || current.question_started_at,
-                    question_duration_seconds: message.payload?.question_duration_seconds ?? current.question_duration_seconds,
-                    question_ends_at: message.payload?.question_ends_at || current.question_ends_at,
+                    question_duration_seconds: Object.prototype.hasOwnProperty.call(message.payload || {}, "question_duration_seconds")
+                      ? message.payload.question_duration_seconds
+                      : current.question_duration_seconds,
+                    question_ends_at: Object.prototype.hasOwnProperty.call(message.payload || {}, "question_ends_at")
+                      ? message.payload.question_ends_at
+                      : current.question_ends_at,
                   }
                 : current
             ));
             if (message.payload?.question_duration_seconds) {
               setTimerMinutes(Math.max(0.25, Math.round((message.payload.question_duration_seconds / 60) * 100) / 100));
             }
+            setDashboardTimeLeft(secondsUntil(message.payload?.question_ends_at));
             if (message.payload?.stats) setStats(message.payload.stats);
           }
           if (message.type === "response_submitted" && message.payload?.stats) {
             setStats(message.payload.stats);
+          }
+          if (message.type === "short_answers_corrected" && message.payload?.stats) {
+            setStats(message.payload.stats);
+            setSummaryPreviewData({});
+          }
+          if (message.type === "instructor_review_updated" && message.payload?.stats) {
+            setStats(message.payload.stats);
+            setSummaryPreviewData({});
           }
           if (message.type === "answer_revealed") {
             if (message.payload?.stats) setStats(message.payload.stats);
@@ -116,7 +672,6 @@ export function LiveParticipationDashboardPage() {
             )));
           }
           if (message.type === "session_finished") {
-            setFinishSummary(message.payload);
             setSession((current) => (current ? { ...current, status: "finished" } : current));
           }
         } catch {
@@ -135,14 +690,66 @@ export function LiveParticipationDashboardPage() {
   const chartQuestionId = chartQuestionIds[chartQuestionIndex] || "";
   const chartDistribution = chartQuestionId ? (stats?.answer_distribution?.[chartQuestionId] ?? {}) : {};
   const chartQuestion = liveQuestions.find((question) => question.question_id === chartQuestionId);
+  const isShortAnswerQuestion = chartQuestion?.type === "short_answer";
   const chartTotal = Object.values(chartDistribution).reduce((sum, value) => sum + value, 0);
   const correctCount = chartQuestionId ? (stats?.correct_counts?.[chartQuestionId] ?? 0) : 0;
   const incorrectCount = chartQuestionId ? (stats?.incorrect_counts?.[chartQuestionId] ?? 0) : 0;
+  const semanticCounts = chartQuestionId ? (stats?.semantic_counts?.[chartQuestionId] ?? {}) : {};
+  const semanticCorrectCount = semanticCounts.correct ?? correctCount;
+  const semanticPartialCount = semanticCounts.partial ?? 0;
+  const semanticIncorrectCount = semanticCounts.incorrect ?? incorrectCount;
+  const scoredShortAnswerCount = (semanticCounts.correct ?? 0) + (semanticCounts.partial ?? 0) + (semanticCounts.incorrect ?? 0);
+  const shortAnswersNeedCorrection = isShortAnswerQuestion && chartTotal > 0 && scoredShortAnswerCount < chartTotal;
+  const shortAnswersWaitingForCorrection = Math.max(chartTotal - scoredShortAnswerCount, 0);
   const responseAudience = Math.max(stats?.participation_count ?? 0, chartTotal);
   const notAnsweredCount = Math.max(responseAudience - chartTotal, 0);
   const responseRate = responseAudience ? Math.round((chartTotal / responseAudience) * 1000) / 10 : 0;
   const answerRows = Object.entries(chartDistribution).sort(([first], [second]) => first.localeCompare(second));
   const visibleAnswerRows = answerRows.length > 0 ? answerRows : PLACEHOLDER_ANSWERS.map((answer) => [answer, 0]);
+  const shortAnswerRows = [
+    {
+      key: "correct",
+      label: "Correct",
+      count: semanticCorrectCount,
+      correctness: "correct",
+      badgeClass: "bg-emerald-600 text-white",
+      barClass: "bg-emerald-600",
+    },
+    {
+      key: "partial",
+      label: "Partial",
+      count: semanticPartialCount,
+      correctness: "partial",
+      badgeClass: "bg-amber-500 text-white",
+      barClass: "bg-amber-500",
+    },
+    {
+      key: "incorrect",
+      label: "Needs review",
+      count: semanticIncorrectCount,
+      correctness: "incorrect",
+      badgeClass: "bg-rose-600 text-white",
+      barClass: "bg-rose-600",
+    },
+    {
+      key: "not_answered",
+      label: "Not answered",
+      count: notAnsweredCount,
+      status: "not_answered",
+      badgeClass: "bg-slate-500 text-white",
+      barClass: "bg-slate-400",
+    },
+  ];
+  const hasActiveQuestionTimer = activeQuestionId === chartQuestionId && Boolean(session?.question_ends_at);
+  const activeQuestionTimeEnded = hasActiveQuestionTimer && dashboardTimeLeft <= 0;
+
+  useEffect(() => {
+    setDashboardTimeLeft(secondsUntil(session?.question_ends_at));
+    const interval = window.setInterval(() => {
+      setDashboardTimeLeft(secondsUntil(session?.question_ends_at));
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [activeQuestionId, session?.question_ends_at]);
 
   function timerDurationSeconds() {
     return Math.min(Math.max(Math.round(Number(timerMinutes || 0) * 60), 15), 3600);
@@ -150,13 +757,19 @@ export function LiveParticipationDashboardPage() {
 
   useEffect(() => {
     if (!sessionId || questionIds.length === 0) return;
-    const storedQuestionId = session?.active_question_id || activeQuestionId || localStorage.getItem(`activeQuestionId:${sessionId}`) || localStorage.getItem("activeQuestionId") || "";
-    const nextQuestionId = questionIds.includes(storedQuestionId) ? storedQuestionId : questionIds[0];
-    setActiveQuestionId((current) => (questionIds.includes(current) ? current : nextQuestionId));
-    const nextChartIndex = chartQuestionIds.indexOf(nextQuestionId);
+    const liveQuestionId = session?.active_question_id || "";
+    setActiveQuestionId(liveQuestionId);
+    const nextChartIndex = chartQuestionIds.indexOf(liveQuestionId);
     if (nextChartIndex >= 0) setChartQuestionIndex(nextChartIndex);
-    localStorage.setItem(`activeQuestionId:${sessionId}`, nextQuestionId);
-    localStorage.setItem("activeQuestionId", nextQuestionId);
+    if (liveQuestionId) {
+      localStorage.setItem(`activeQuestionId:${sessionId}`, liveQuestionId);
+      localStorage.setItem("activeQuestionId", liveQuestionId);
+    } else {
+      localStorage.removeItem(`activeQuestionId:${sessionId}`);
+      if (localStorage.getItem("activeQuestionId") && !questionIds.includes(localStorage.getItem("activeQuestionId"))) {
+        localStorage.removeItem("activeQuestionId");
+      }
+    }
   }, [activeQuestionId, session?.active_question_id, sessionId, questionKey]);
 
   useEffect(() => {
@@ -168,7 +781,7 @@ export function LiveParticipationDashboardPage() {
     : 0;
 
   if (!sessionId) {
-    return <EmptyState title="No session selected" description="Create a session first, then open its live dashboard." />;
+    return <EmptyState title="No session selected" description="Create a session first." />;
   }
 
   function shortenQuestionId(id) {
@@ -176,25 +789,40 @@ export function LiveParticipationDashboardPage() {
     return `${id.slice(0, 8)}...${id.slice(-4)}`;
   }
 
-  async function activateQuestion(questionId, index) {
+  async function activateQuestion(questionId, index, { timed = false } = {}) {
     setActivatingQuestionId(questionId);
+    const requestedDurationSeconds = timed ? timerDurationSeconds() : undefined;
+    if (requestedDurationSeconds) {
+      setActiveQuestionId(questionId);
+      setDashboardTimeLeft(requestedDurationSeconds);
+    }
     try {
-      const updatedSession = await updateInstructorActiveQuestion(sessionId, questionId, timerDurationSeconds());
+      const updatedSession = await updateInstructorActiveQuestion(sessionId, questionId, requestedDurationSeconds);
       setSession(updatedSession);
-      setTimerMinutes(Math.max(0.25, Math.round(((updatedSession.question_duration_seconds || timerDurationSeconds()) / 60) * 100) / 100));
+      if (updatedSession.question_duration_seconds) {
+        setTimerMinutes(Math.max(0.25, Math.round((updatedSession.question_duration_seconds / 60) * 100) / 100));
+      }
+      setDashboardTimeLeft(secondsUntil(updatedSession.question_ends_at));
       setActiveQuestionId(questionId);
       localStorage.setItem(`activeQuestionId:${sessionId}`, questionId);
       localStorage.setItem("activeQuestionId", questionId);
       const nextChartIndex = chartQuestionIds.indexOf(questionId);
       if (nextChartIndex >= 0) setChartQuestionIndex(nextChartIndex);
-      window.dispatchEvent(new window.CustomEvent("live-question-activated", { detail: { sessionId, questionId, questionNumber: index + 1 } }));
+      window.dispatchEvent(new window.CustomEvent("live-question-activated", {
+        detail: {
+          sessionId,
+          questionId,
+          questionNumber: index + 1,
+          questionDurationSeconds: updatedSession.question_duration_seconds,
+          questionEndsAt: updatedSession.question_ends_at,
+        },
+      }));
       showToast({
-        title: `Question ${index + 1} is live`,
-        description: "Students will answer this question now.",
+        title: `Question ${index + 1} live`,
         tone: "success",
       });
     } catch (err) {
-      showToast({ title: "Could not activate question", description: err instanceof Error ? err.message : "Could not activate question", tone: "error" });
+      showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : "Could not activate question", tone: "error" });
     } finally {
       setActivatingQuestionId("");
     }
@@ -203,7 +831,7 @@ export function LiveParticipationDashboardPage() {
   async function startQuestionTimer() {
     if (!chartQuestionId) return;
     const questionIndex = questionIds.indexOf(chartQuestionId);
-    await activateQuestion(chartQuestionId, questionIndex >= 0 ? questionIndex : chartQuestionIndex);
+    await activateQuestion(chartQuestionId, questionIndex >= 0 ? questionIndex : chartQuestionIndex, { timed: true });
     setTimerModalOpen(false);
   }
 
@@ -218,11 +846,27 @@ export function LiveParticipationDashboardPage() {
           : question
       )));
       if (result.stats) setStats(result.stats);
-      showToast({ title: "Answer revealed", description: "Students can now see the correct answer and feedback.", tone: "success" });
+      showToast({ title: "Answer revealed", tone: "success" });
     } catch (err) {
-      showToast({ title: "Could not reveal answer", description: err instanceof Error ? err.message : "Could not reveal answer", tone: "error" });
+      showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : "Could not reveal answer", tone: "error" });
     } finally {
       setRevealingQuestionId("");
+    }
+  }
+
+  async function recalculateShortAnswers() {
+    if (!sessionId || !chartQuestionId || !isShortAnswerQuestion) return;
+    setCorrectingQuestionId(chartQuestionId);
+    try {
+      const result = await correctShortAnswerResponses(sessionId, chartQuestionId);
+      if (result.stats) setStats(result.stats);
+      setSummaryPreviewData({});
+      showToast({ title: "Scores recalculated", tone: "success" });
+      await loadResponseDetails();
+    } catch (err) {
+      showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : "Could not recalculate answers", tone: "error" });
+    } finally {
+      setCorrectingQuestionId("");
     }
   }
 
@@ -230,12 +874,11 @@ export function LiveParticipationDashboardPage() {
     if (!sessionId) return;
     setFinishingSession(true);
     try {
-      const result = await finishLiveSession(sessionId);
-      setFinishSummary(result);
+      await finishLiveSession(sessionId);
       setSession((current) => (current ? { ...current, status: "finished" } : current));
-      showToast({ title: "Session finished", description: "Stars and session badges have been finalized.", tone: "success" });
+      showToast({ title: "Session finished", tone: "success" });
     } catch (err) {
-      showToast({ title: "Could not finish session", description: err instanceof Error ? err.message : "Could not finish session", tone: "error" });
+      showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : "Could not complete session", tone: "error" });
     } finally {
       setFinishingSession(false);
     }
@@ -247,6 +890,7 @@ export function LiveParticipationDashboardPage() {
   }
 
   function openDetails({ status = "all", answer = "", correctness = "" } = {}) {
+    setDetailsData(null);
     setDetailsStatus(status);
     setDetailsAnswer(answer);
     setDetailsCorrectness(correctness);
@@ -268,10 +912,43 @@ export function LiveParticipationDashboardPage() {
       setDetailsData(result);
     } catch (err) {
       if (showError) {
-        showToast({ title: "Could not load response details", description: err instanceof Error ? err.message : "Could not load response details", tone: "error" });
+        showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : "Could not load response details", tone: "error" });
       }
     } finally {
       setDetailsLoading(false);
+    }
+  }
+
+  async function saveInstructorReview(responseId, payload) {
+    if (!responseId) return;
+    setSavingReviewId(responseId);
+    try {
+      const result = await updateInstructorReview(responseId, payload);
+      if (result.stats) setStats(result.stats);
+      setSummaryPreviewData({});
+      setDetailsData((current) => {
+        if (!current?.students) return current;
+        return {
+          ...current,
+          students: current.students.map((student) => (
+            student.response_id === responseId
+              ? {
+                  ...student,
+                  instructorReview: result.instructorReview,
+                  semantic_score: result.finalScore,
+                  semantic_label: result.finalLabel,
+                  is_correct: result.is_correct,
+                  stars_earned: result.stars_earned,
+                }
+              : student
+          )),
+        };
+      });
+      showToast({ title: "Saved", tone: "success" });
+    } catch (err) {
+      showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : "Could not save review", tone: "error" });
+    } finally {
+      setSavingReviewId("");
     }
   }
 
@@ -280,9 +957,22 @@ export function LiveParticipationDashboardPage() {
     void loadResponseDetails();
   }, [detailsOpen, detailsStatus, detailsAnswer, detailsCorrectness, detailsSearch, chartQuestionId, stats?.updated_at]);
 
+  useEffect(() => {
+    if (!detailsOpen) return undefined;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, [detailsOpen]);
+
   function detailTitle() {
     if (detailsAnswer) return `Students who answered ${detailsAnswer}`;
     if (detailsCorrectness === "correct") return "Correct responses";
+    if (detailsCorrectness === "partial") return "Partially correct responses";
     if (detailsCorrectness === "incorrect") return "Needs review";
     if (detailsStatus === "not_answered") return "Not answered yet";
     if (detailsStatus === "answered") return "Answered students";
@@ -299,19 +989,19 @@ export function LiveParticipationDashboardPage() {
     if (!link) return;
     try {
       await navigator.clipboard?.writeText(link);
-      showToast({ title: "Join link copied", description: "Students can use this link to join the live session.", tone: "success" });
+      showToast({ title: "Copied", tone: "success" });
     } catch {
-      showToast({ title: "Could not copy link", description: "Copy is unavailable in this browser.", tone: "error" });
+      showToast({ title: "Something went wrong", description: "Copy is unavailable in this browser.", tone: "error" });
     }
   }
 
-  function previewKey(status, correctness = "") {
-    return `${chartQuestionId}:${status}:${correctness}:${stats?.updated_at || "static"}`;
+  function previewKey(status, correctness = "", answer = "") {
+    return `${chartQuestionId}:${status}:${correctness}:${answer}:${stats?.updated_at || "static"}`;
   }
 
-  async function loadSummaryPreview(status, correctness = "") {
+  async function loadSummaryPreview(status, correctness = "", answer = "") {
     if (!sessionId || !chartQuestionId) return;
-    const key = previewKey(status, correctness);
+    const key = previewKey(status, correctness, answer);
     if (summaryPreviewData[key] || summaryPreviewLoading[key]) return;
     setSummaryPreviewLoading((current) => ({ ...current, [key]: true }));
     try {
@@ -319,6 +1009,7 @@ export function LiveParticipationDashboardPage() {
         question_id: chartQuestionId,
         status,
         correctness,
+        answer,
       });
       setSummaryPreviewData((current) => ({ ...current, [key]: result }));
     } catch {
@@ -331,14 +1022,15 @@ export function LiveParticipationDashboardPage() {
     }
   }
 
-  function SummaryStudentPreview({ status, correctness = "", title }) {
-    const key = previewKey(status, correctness);
+  function SummaryStudentPreview({ status, correctness = "", answer = "", title }) {
+    const key = previewKey(status, correctness, answer);
     const preview = summaryPreviewData[key];
     const loading = summaryPreviewLoading[key];
     const students = preview?.students || [];
     const showCorrectnessGroups = status === "answered" && !correctness;
     const correctStudents = showCorrectnessGroups ? students.filter((student) => student.is_correct === true) : [];
-    const notCorrectStudents = showCorrectnessGroups ? students.filter((student) => student.is_correct === false) : [];
+    const partialStudents = showCorrectnessGroups ? students.filter((student) => student.semantic_label === "partial") : [];
+    const notCorrectStudents = showCorrectnessGroups ? students.filter((student) => student.is_correct === false && student.semantic_label !== "partial") : [];
     const uncheckedStudents = showCorrectnessGroups ? students.filter((student) => student.is_correct !== true && student.is_correct !== false) : [];
     const visibleStudents = students.slice(0, 7);
     const remainingCount = Math.max(students.length - visibleStudents.length, 0);
@@ -373,6 +1065,7 @@ export function LiveParticipationDashboardPage() {
           {!loading && showCorrectnessGroups && (
             <>
               {previewGroup("Correct", correctStudents, "text-emerald-700 dark:text-emerald-100")}
+              {previewGroup("Partial", partialStudents, "text-amber-700 dark:text-amber-100")}
               {previewGroup("Not correct", notCorrectStudents, "text-rose-700 dark:text-rose-100")}
               {previewGroup("Unchecked", uncheckedStudents, "text-slate-500 dark:text-slate-400")}
             </>
@@ -391,75 +1084,62 @@ export function LiveParticipationDashboardPage() {
   }
 
   return (
-    <div className="mx-auto flex h-screen w-full max-w-[1600px] flex-col gap-2 overflow-hidden bg-slate-50 p-2 dark:bg-slate-950">
+    <div className="mx-auto flex min-h-screen w-full max-w-[1600px] flex-col gap-3 bg-slate-50 p-3 dark:bg-slate-950 sm:p-4 lg:h-screen lg:overflow-hidden">
       {session && (
-        <div className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
+        <div className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:px-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
               <div className="min-w-0">
                 <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400">Session Code</span>
                 <div className="flex items-center gap-2">
                   <h2 className="truncate text-xl font-black tracking-wide text-slate-900 dark:text-white">{session.session_code}</h2>
-                  <Badge tone={session.status === "active" ? "green" : session.status === "scheduled" ? "gold" : "slate"}>{session.status}</Badge>
+                  <Badge tone={getSessionStatusTone(session.status)}>{getSessionStatusLabel(session.status)}</Badge>
                 </div>
               </div>
               <div className="hidden h-6 w-px bg-slate-200 dark:bg-slate-800 sm:block" />
-              <div className="hidden items-center gap-1.5 sm:flex">
-                <div className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-bold dark:bg-slate-800/50">
+              <div className="grid grid-cols-2 gap-1.5 sm:flex sm:items-center">
+                <div className="flex min-h-8 items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-bold dark:bg-slate-800/50">
                   <UsersRound size={13} className="text-slate-500" />
                   <span>Joined: <strong className="text-slate-900 dark:text-white">{stats?.participation_count ?? 0}</strong></span>
                 </div>
-                <div className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-bold dark:bg-slate-800/50">
+                <div className="flex min-h-8 items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-bold dark:bg-slate-800/50">
                   <MessageCircle size={13} className="text-slate-500" />
-                  <span>Submissions: <strong className="text-slate-900 dark:text-white">{responseCount}</strong></span>
+                  <span>Answered: <strong className="text-slate-900 dark:text-white">{responseCount}</strong></span>
                 </div>
               </div>
             </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <Button type="button" variant="outline" size="sm" className="h-8 w-8 p-0" disabled={!session.qr_code_base64} onClick={() => setQrModalOpen(true)} title="Show QR Code">
-                <QrCode size={14} />
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+              <Button type="button" variant="outline" size="icon" className="h-11 w-11 rounded-full" disabled={!session.qr_code_base64} onClick={() => setQrModalOpen(true)} title="Show QR Code">
+                <QrCode size={18} />
               </Button>
-              <Button type="button" variant="outline" size="sm" className="h-8 w-8 p-0" disabled={!session.join_link} onClick={copyJoinLink} title="Copy Join Link">
-                <Copy size={14} />
+              <Button type="button" variant="outline" size="icon" className="h-11 w-11 rounded-full" disabled={!session.join_link} onClick={copyJoinLink} title="Copy Join Link">
+                <Copy size={18} />
               </Button>
-              <Button type="button" variant="outline" size="sm" className="h-8 px-2.5 text-xs" loading={finishingSession} disabled={session.status === "finished"} onClick={finishSession}>
-                <Flag size={13} />
-                End
+              <Button type="button" variant="outline" size="md" className="h-11 rounded-full px-4 text-sm" loading={finishingSession} disabled={session.status !== "active"} onClick={finishSession}>
+                <CheckCircle2 size={17} />
+                {session.status === "finished" ? "Finished" : "End"}
               </Button>
             </div>
           </div>
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 overflow-hidden lg:grid-cols-[300px_minmax(0,1fr)]">
-        <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex border-b border-slate-200 bg-slate-50 p-1 dark:border-slate-800 dark:bg-slate-950">
-            <button
-              type="button"
-              onClick={() => setLeftPanelTab("questions")}
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1 text-xs font-bold transition ${leftPanelTab === "questions" ? "bg-white text-role-primary shadow-sm dark:bg-slate-900" : "text-slate-500"}`}
-            >
+      <div className="grid flex-1 items-stretch gap-3 lg:min-h-0 lg:grid-cols-[minmax(260px,320px)_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[minmax(280px,340px)_minmax(0,1fr)]">
+        <div className="flex min-h-[18rem] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:min-h-0">
+          <div className="border-b border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950">
+            <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wide text-role-primary">
               <Layers size={13} />
               Questions ({questionIds.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setLeftPanelTab("insights")}
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1 text-xs font-bold transition ${leftPanelTab === "insights" ? "bg-white text-role-primary shadow-sm dark:bg-slate-900" : "text-slate-500"}`}
-            >
-              <Activity size={13} />
-              Live Flags
-            </button>
+            </div>
           </div>
 
-          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
-            {leftPanelTab === "questions" ? (
-              questionIds.map((questionId, index) => {
+          <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto p-2">
+            {questionIds.map((questionId, index) => {
                 const isActive = activeQuestionId === questionId;
                 const answerCount = Object.values(stats?.answer_distribution?.[questionId] ?? {}).reduce((sum, value) => sum + value, 0);
 
                 return (
-                  <div key={questionId} className={`flex items-center justify-between gap-2 rounded-lg border p-1.5 text-xs transition ${isActive ? "border-emerald-500/40 bg-emerald-50/30 dark:bg-emerald-950/20" : "border-slate-100 bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
+                  <div key={questionId} className={`flex min-h-12 items-center justify-between gap-2 rounded-lg border p-2 text-xs transition ${isActive ? "border-emerald-500/40 bg-emerald-50/30 dark:bg-emerald-950/20" : "border-slate-100 bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
                     <div className="flex min-w-0 items-center gap-2">
                       <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${isActive ? "bg-emerald-500 text-white" : "bg-slate-100 text-slate-600 dark:bg-slate-800"}`}>{index + 1}</span>
                       <span className="truncate font-bold text-slate-700 dark:text-slate-300">Q{index + 1} ({answerCount} ans)</span>
@@ -467,150 +1147,204 @@ export function LiveParticipationDashboardPage() {
                     {isActive ? (
                       <span className="rounded bg-emerald-100/50 px-1.5 py-0.5 text-[10px] font-black text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400">LIVE</span>
                     ) : (
-                      <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-[10px]" loading={activatingQuestionId === questionId} onClick={() => activateQuestion(questionId, index)}>
-                        <Play size={10} />
+                      <Button type="button" size="sm" variant="outline" className="h-8 rounded-lg px-3 text-xs" loading={activatingQuestionId === questionId} onClick={() => activateQuestion(questionId, index)}>
+                        <Play size={13} />
                         Run
                       </Button>
                     )}
                   </div>
                 );
-              })
-            ) : (
-              <div className="space-y-2 text-xs">
-                <div>
-                  <p className="mb-1 text-[10px] font-black uppercase text-slate-400">Session Summary Data</p>
-                  <div className="grid grid-cols-2 gap-1">
-                    <div className="rounded-lg bg-slate-50 p-1.5 dark:bg-slate-950">
-                      <span className="block text-[10px] text-slate-400">Avg Correctness</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">{finishSummary?.average_correctness ?? 0}%</span>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 p-1.5 dark:bg-slate-950">
-                      <span className="block text-[10px] text-slate-400">Badges Issued</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">{finishSummary?.students_who_earned_badges?.length ?? 0}</span>
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <p className="mb-1 flex items-center gap-1 text-[10px] font-black uppercase text-amber-600"><HelpCircle size={11} /> Support Flags</p>
-                  <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-amber-100 p-1 dark:border-amber-950">
-                    {(finishSummary?.students_needing_support || []).length === 0 ? (
-                      <p className="p-1 text-center text-[11px] text-slate-400">No current alerts.</p>
-                    ) : (
-                      finishSummary.students_needing_support.map((student) => (
-                        <div key={student.student_id} className="flex justify-between rounded bg-amber-50/50 p-1 dark:bg-amber-950/20">
-                          <span className="truncate font-medium">{student.student_name}</span>
-                          <span className="shrink-0 font-bold text-amber-700">{student.stars} stars</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
+              })}
           </div>
         </div>
 
-        <div className="flex min-h-0 flex-col gap-2 overflow-hidden">
-          <div className="flex shrink-0 flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
+        <div className="grid min-h-0 gap-3 lg:grid-rows-[auto_minmax(0,1fr)] lg:overflow-hidden">
+          <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Badge tone={activeQuestionId === chartQuestionId ? "green" : "slate"}>{activeQuestionId === chartQuestionId ? "Live Focus" : "Preview"}</Badge>
                   {chartQuestion?.type && <Badge tone="teal">{chartQuestion.type === "mcq" ? "MCQ" : "Short text"}</Badge>}
                   <Badge tone={chartQuestion?.is_revealed ? "green" : "slate"}>{chartQuestion?.is_revealed ? "Revealed" : "Answers Private"}</Badge>
+                  {activeQuestionId === chartQuestionId && (
+                    <Badge tone={hasActiveQuestionTimer ? (activeQuestionTimeEnded ? "gold" : "teal") : "slate"}>
+                      {hasActiveQuestionTimer ? (activeQuestionTimeEnded ? "Time ended" : `${formatTime(dashboardTimeLeft)} left`) : "Unlimited"}
+                    </Badge>
+                  )}
                 </div>
-                <h3 className="mt-1.5 truncate text-base font-black text-slate-900 dark:text-white">
+                <h3 className="mt-2 text-base font-black leading-snug text-slate-900 dark:text-white">
                   {chartQuestion?.question_text || "Select a question to display live statistics"}
                 </h3>
               </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <Button type="button" size="sm" variant="outline" className="h-8 w-8 p-0" disabled={!chartQuestionId} onClick={() => setTimerModalOpen(true)} aria-label="Set question timer">
-                  <Timer size={14} />
+              <div className="flex shrink-0 items-center justify-end gap-2">
+                <Button type="button" size="icon" variant="outline" className="h-11 w-11 rounded-full" disabled={!chartQuestionId} onClick={() => setTimerModalOpen(true)} aria-label="Set question timer">
+                  <Timer size={18} />
                 </Button>
-                <Button type="button" variant={chartQuestion?.is_revealed ? "success" : "role"} size="sm" className="h-8 px-2.5 text-xs" loading={revealingQuestionId === chartQuestionId} disabled={!chartQuestion || chartQuestion.is_revealed} onClick={revealAnswer}>
-                  {chartQuestion?.is_revealed ? <CheckCircle2 size={13} /> : <Eye size={13} />}
+                <Button type="button" variant={chartQuestion?.is_revealed ? "success" : "role"} size="md" className="h-11 rounded-full px-5 text-sm" loading={revealingQuestionId === chartQuestionId} disabled={!chartQuestion || chartQuestion.is_revealed} onClick={revealAnswer}>
+                  {chartQuestion?.is_revealed ? <CheckCircle2 size={17} /> : <Eye size={17} />}
                   Reveal
                 </Button>
               </div>
             </div>
 
             {chartQuestion?.options?.length > 0 && (
-              <div className="grid grid-cols-2 gap-1.5 border-t border-slate-100 pt-1 dark:border-slate-800 sm:grid-cols-4">
+              <div className="grid grid-cols-1 gap-2 border-t border-slate-100 pt-2 dark:border-slate-800 sm:grid-cols-2 xl:grid-cols-4">
                 {chartQuestion.options.map((option, index) => (
-                  <div key={`${index}:${option}`} className="truncate rounded-md border border-slate-100 bg-slate-50 px-2 py-1 text-xs font-medium dark:border-slate-800 dark:bg-slate-950">
+                  <div key={`${index}:${option}`} className="flex min-h-10 items-center rounded-md border border-slate-100 bg-slate-50 px-2.5 py-1.5 text-xs font-medium dark:border-slate-800 dark:bg-slate-950">
                     <strong className="mr-1 text-role-primary">{String.fromCharCode(65 + index)}.</strong>
-                    {option}
+                    <span className="min-w-0 truncate">{option}</span>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-100 pb-2 dark:border-slate-800">
-              <h4 className="text-xs font-black uppercase tracking-wider text-slate-400">Answer Distribution Metrics</h4>
-              <div className="flex items-center gap-1">
-                <Button type="button" variant="ghost" size="sm" className="h-7 w-7 rounded-full p-0" disabled={chartQuestionIds.length <= 1} onClick={() => moveChart(-1)}>
-                  <ChevronLeft size={14} />
+          <div className="flex min-h-[24rem] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-4 lg:min-h-0">
+            <div className="flex shrink-0 flex-col gap-2 border-b border-slate-100 pb-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-400">{isShortAnswerQuestion ? "Short Answers" : "Answers"}</h4>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {isShortAnswerQuestion && (
+                  <Button
+                    type="button"
+                    variant={shortAnswersNeedCorrection ? "role" : "outline"}
+                    size="sm"
+                    className="h-9 rounded-full"
+                    loading={correctingQuestionId === chartQuestionId}
+                    disabled={!chartQuestionId || chartTotal === 0}
+                    onClick={recalculateShortAnswers}
+                  >
+                    <RefreshCw size={15} />
+                    {shortAnswersNeedCorrection ? "Correct answers" : "Recalculate"}
+                  </Button>
+                )}
+                <Button type="button" variant="ghost" size="icon" className="h-9 w-9 rounded-full" disabled={chartQuestionIds.length <= 1} onClick={() => moveChart(-1)}>
+                  <ChevronLeft size={17} />
                 </Button>
-                <span className="min-w-8 text-center text-xs font-black">{chartQuestionIds.length ? `${chartQuestionIndex + 1}/${chartQuestionIds.length}` : "0/0"}</span>
-                <Button type="button" variant="ghost" size="sm" className="h-7 w-7 rounded-full p-0" disabled={chartQuestionIds.length <= 1} onClick={() => moveChart(1)}>
-                  <ChevronRight size={14} />
+                <span className="min-w-10 text-center text-sm font-black">{chartQuestionIds.length ? `${chartQuestionIndex + 1}/${chartQuestionIds.length}` : "0/0"}</span>
+                <Button type="button" variant="ghost" size="icon" className="h-9 w-9 rounded-full" disabled={chartQuestionIds.length <= 1} onClick={() => moveChart(1)}>
+                  <ChevronRight size={17} />
                 </Button>
               </div>
             </div>
 
-            <div className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+            <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+              {shortAnswersNeedCorrection && (
+                <div className="rounded-xl border border-role-border bg-role-hover p-3 text-sm dark:border-slate-800 dark:bg-slate-950/60">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="font-black text-slate-900 dark:text-white">Correct submitted answers</p>
+                      <p className="mt-1 text-xs font-semibold leading-5 text-slate-500 dark:text-slate-400">
+                        {shortAnswersWaitingForCorrection} answered {shortAnswersWaitingForCorrection === 1 ? "response needs" : "responses need"} scoring before result buckets are shown.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="role"
+                      size="sm"
+                      className="h-9 shrink-0 rounded-full"
+                      loading={correctingQuestionId === chartQuestionId}
+                      onClick={recalculateShortAnswers}
+                    >
+                      <RefreshCw size={15} />
+                      Start correcting
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {chartQuestion && (
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50/80 p-3 text-sm dark:border-emerald-400/20 dark:bg-emerald-500/10">
+                  <p className="text-[11px] font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-100">Correct answer</p>
+                  <p className="mt-1 break-words font-black leading-6 text-emerald-950 dark:text-emerald-50">
+                    {getCorrectAnswerDisplay(chartQuestion)}
+                  </p>
+                </div>
+              )}
+
               <button
                 type="button"
-                className="group relative w-full rounded-xl border border-slate-100 bg-slate-50 p-2 text-left transition hover:bg-slate-100/50 dark:border-slate-800 dark:bg-slate-950/40"
+                className="group relative w-full rounded-xl border border-slate-100 bg-slate-50 p-3 text-left transition hover:bg-slate-100/50 dark:border-slate-800 dark:bg-slate-950/40"
                 onClick={() => openDetails({ status: "all" })}
                 onMouseEnter={() => loadSummaryPreview("answered")}
               >
-                <div className="mb-1 flex items-center justify-between text-xs font-bold">
-                  <span className="text-slate-500">Global Class Progress Rate</span>
-                  <span className="font-black text-role-primary">{responseRate}%</span>
+                <div className="mb-2 flex items-center justify-between gap-3 text-xs font-bold">
+                  <span className="text-slate-500">Progress</span>
+                  <span className="font-black text-role-primary">
+                    {responseRate >= 100 ? "Complete" : responseRate <= 0 ? "No activity" : `${responseRate}%`}
+                  </span>
                 </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
-                  <div className="h-full bg-role-primary transition-all" style={{ width: `${responseRate}%` }} />
-                </div>
+                <MetricProgressLine percentage={responseRate} />
                 <div className="mt-1 flex items-center justify-between text-[11px] font-medium text-slate-400">
-                  <span>{chartTotal} Active Submissions</span>
-                  <span>{notAnsweredCount} Waiting Action</span>
+                  <span>{chartTotal} answered</span>
+                  <span>{notAnsweredCount} waiting</span>
                 </div>
                 <SummaryStudentPreview status="answered" title="Submitted Group" />
               </button>
 
-              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                {visibleAnswerRows.map(([answer, count], index) => {
-                  const percentage = chartTotal ? Math.round((count / chartTotal) * 100) : 0;
-                  const label = /^[A-D]$/i.test(String(answer).trim()) ? String(answer).trim().toUpperCase() : String.fromCharCode(65 + index);
-                  return (
-                    <button
-                      key={answer}
-                      type="button"
-                      disabled={!chartQuestionId || count === 0}
-                      onClick={() => openDetails({ status: "answered", answer })}
-                      className="flex items-center justify-between rounded-xl border border-slate-100 bg-white p-2 text-xs transition hover:translate-x-0.5 hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-800 dark:bg-slate-900"
-                    >
-                      <div className="flex min-w-0 flex-1 items-center gap-2">
-                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-role-primary text-[10px] font-black text-white">{label}</span>
-                        <div className="min-w-0 flex-1">
-                          <div className="mt-0.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                            <div className="h-full bg-role-primary" style={{ width: `${percentage}%` }} />
-                          </div>
+              {isShortAnswerQuestion ? (
+                <div className="grid auto-rows-fr grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  {shortAnswerRows.map((row) => {
+                    const percentage = responseAudience ? Math.round((row.count / responseAudience) * 100) : 0;
+                    return (
+                      <button
+                        key={row.key}
+                        type="button"
+                        disabled={!chartQuestionId || row.count === 0}
+                        onClick={() => openDetails(row.status ? { status: row.status } : { status: "answered", correctness: row.correctness })}
+                        onFocus={() => loadSummaryPreview(row.status || "answered", row.correctness || "")}
+                        onMouseEnter={() => loadSummaryPreview(row.status || "answered", row.correctness || "")}
+                        className="group relative flex min-h-24 flex-col justify-between rounded-xl border border-slate-100 bg-white p-3 text-left text-xs transition hover:border-slate-300 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-800 dark:bg-slate-900"
+                      >
+                        <div className="flex w-full items-start justify-between gap-3">
+                          <span className={`flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full px-2 text-[11px] font-black ${row.badgeClass}`}>
+                            {row.key === "not_answered" ? "NA" : row.label.charAt(0)}
+                          </span>
+                          <span className="text-right font-black text-slate-700 dark:text-slate-300">
+                            {percentage >= 100 || percentage <= 0 ? studentCountLabel(row.count) : `${percentage}% (${row.count})`}
+                          </span>
                         </div>
-                      </div>
-                      <span className="ml-3 shrink-0 font-black text-slate-700 dark:text-slate-300">{percentage}% ({count})</span>
-                    </button>
-                  );
-                })}
-              </div>
+                        <p className="mt-3 truncate font-black text-slate-800 dark:text-slate-100">{row.label}</p>
+                        <MetricProgressLine percentage={percentage} barClass={row.barClass} />
+                        <SummaryStudentPreview status={row.status || "answered"} correctness={row.correctness || ""} title={`${row.label} students`} />
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="grid auto-rows-fr grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  {visibleAnswerRows.map(([answer, count], index) => {
+                    const percentage = chartTotal ? Math.round((count / chartTotal) * 100) : 0;
+                    const label = /^[A-D]$/i.test(String(answer).trim()) ? String(answer).trim().toUpperCase() : String.fromCharCode(65 + index);
+                    const isCorrectOption = isCorrectAnswerOption(chartQuestion, answer, index);
+                    return (
+                      <button
+                        key={answer}
+                        type="button"
+                        disabled={!chartQuestionId || count === 0}
+                        onClick={() => openDetails({ status: "answered", answer })}
+                        onFocus={() => loadSummaryPreview("answered", "", answer)}
+                        onMouseEnter={() => loadSummaryPreview("answered", "", answer)}
+                        className={`group relative flex min-h-20 flex-col justify-between rounded-xl border bg-white p-3 text-xs transition hover:border-slate-300 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-900 ${isCorrectOption ? "border-emerald-300 ring-2 ring-emerald-100 dark:border-emerald-500/50 dark:ring-emerald-500/10" : "border-slate-100 dark:border-slate-800"}`}
+                      >
+                        <div className="flex w-full items-center justify-between gap-3">
+                          <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-black text-white ${isCorrectOption ? "bg-emerald-600" : "bg-role-primary"}`}>{label}</span>
+                          <span className="text-right font-black text-slate-700 dark:text-slate-300">
+                            {percentage >= 100 || percentage <= 0 ? studentCountLabel(count) : `${percentage}% (${count})`}
+                          </span>
+                        </div>
+                        {isCorrectOption && <p className="mt-2 text-[11px] font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-100">Correct</p>}
+                        <MetricProgressLine percentage={percentage} barClass={isCorrectOption ? "bg-emerald-600" : "bg-role-primary"} />
+                        <SummaryStudentPreview status="answered" answer={answer} title={`${label} students`} />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {chartTotal === 0 && (
                 <div className="flex items-center justify-center gap-1.5 py-4 text-center text-xs text-slate-400">
                   <Activity size={12} className="animate-pulse" />
-                  Live connection active. Awaiting first submission...
+                  {activeQuestionId ? "Waiting for responses..." : "No question is live."}
                 </div>
               )}
             </div>
@@ -618,112 +1352,48 @@ export function LiveParticipationDashboardPage() {
         </div>
       </div>
 
-      <Modal open={detailsOpen} title={detailTitle()} onClose={() => setDetailsOpen(false)} panelClassName="max-w-3xl">
-        <div className="grid gap-4">
-          <div className="grid gap-3 rounded-[18px] bg-role-hover p-3 dark:bg-slate-950 sm:grid-cols-5">
-            <div>
-              <p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Answered</p>
-              <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{detailsData?.summary?.answered ?? chartTotal}</p>
-            </div>
-            <div>
-              <p className="text-xs font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-100">Correct</p>
-              <p className="mt-1 text-xl font-black text-emerald-800 dark:text-emerald-50">{detailsData?.summary?.correct ?? correctCount}</p>
-            </div>
-            <div>
-              <p className="text-xs font-black uppercase tracking-wide text-rose-700 dark:text-rose-100">Needs Review</p>
-              <p className="mt-1 text-xl font-black text-rose-800 dark:text-rose-50">{detailsData?.summary?.incorrect ?? incorrectCount}</p>
-            </div>
-            <div>
-              <p className="text-xs font-black uppercase tracking-wide text-amber-700 dark:text-amber-100">Not Answered</p>
-              <p className="mt-1 text-xl font-black text-amber-800 dark:text-amber-50">{detailsData?.summary?.not_answered ?? notAnsweredCount}</p>
-            </div>
-            <div>
-              <p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Response Rate</p>
-              <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{detailsData?.summary?.response_rate ?? responseRate}%</p>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex flex-wrap gap-2">
-              {[
-                ["all", "All Responses"],
-                ["answered", "Answered"],
-                ["not_answered", "Not Answered"],
-              ].map(([value, label]) => (
-                <Button
-                  key={value}
-                  type="button"
-                  size="sm"
-                  variant={detailsStatus === value && !detailsAnswer && !detailsCorrectness ? "role" : "outline"}
-                  onClick={() => {
-                    setDetailsStatus(value);
-                    setDetailsAnswer("");
-                    setDetailsCorrectness("");
-                  }}
-                >
-                  {label}
-                </Button>
-              ))}
-              {[
-                ["correct", "Correct"],
-                ["incorrect", "Needs Review"],
-              ].map(([value, label]) => (
-                <Button
-                  key={value}
-                  type="button"
-                  size="sm"
-                  variant={detailsCorrectness === value ? "role" : "outline"}
-                  onClick={() => {
-                    setDetailsStatus("answered");
-                    setDetailsAnswer("");
-                    setDetailsCorrectness(value);
-                  }}
-                >
-                  {label}
-                </Button>
-              ))}
-              {detailsAnswer && <Badge tone="teal">Answer: {detailsAnswer}</Badge>}
-              {detailsCorrectness && <Badge tone={detailsCorrectness === "correct" ? "green" : "red"}>{detailsCorrectness === "correct" ? "Correct" : "Needs review"}</Badge>}
-            </div>
-            <label className="relative block lg:w-72">
-              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-              <input
-                className="adaptive-input focus-ring h-10 w-full border border-role-border pl-9 pr-3 text-sm"
-                value={detailsSearch}
-                onChange={(event) => setDetailsSearch(event.target.value)}
-                placeholder="Search student name..."
-              />
-            </label>
-          </div>
-
-          <div className="max-h-[26rem] overflow-y-auto pr-1">
-            {detailsLoading && <div className="rounded-[18px] bg-white p-4 text-sm font-semibold text-slate-500 dark:bg-slate-900 dark:text-slate-300">Loading response details...</div>}
-            {!detailsLoading && (detailsData?.students || []).length === 0 && (
-              <div className="rounded-[18px] bg-white p-4 text-sm font-semibold text-slate-500 dark:bg-slate-900 dark:text-slate-300">
-                No students match this view yet.
-              </div>
-            )}
-            {!detailsLoading && (detailsData?.students || []).map((student) => (
-              <div key={`${student.status}:${student.student_id}:${student.selected_answer || "none"}`} className="mb-2 rounded-[18px] border border-role-border bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0">
-                    <p className="truncate font-black text-slate-950 dark:text-white">{student.student_name}</p>
-                    <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">ID {student.student_id}</p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone={student.status === "answered" ? "green" : "gold"}>{student.status === "answered" ? "Answered" : "Not answered"}</Badge>
-                    {student.is_correct === true && <Badge tone="green">Correct</Badge>}
-                    {student.is_correct === false && <Badge tone="red">Needs review</Badge>}
-                    {student.selected_answer && <Badge tone="teal">{student.selected_answer}</Badge>}
-                    <Badge tone="slate">{formatSubmittedAt(student.submitted_at)}</Badge>
-                    {student.confidence_level && <Badge tone="violet">{student.confidence_level}</Badge>}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </Modal>
+      <ResponsesPanel
+        open={detailsOpen}
+        title={detailTitle()}
+        students={detailsData?.students || []}
+        summary={detailsData?.summary}
+        fallback={{
+          answered: chartTotal,
+          total: responseAudience,
+          correct: semanticCorrectCount,
+          partial: semanticPartialCount,
+          needsReview: semanticIncorrectCount,
+          notAnswered: notAnsweredCount,
+          responseRate,
+        }}
+        loading={detailsLoading}
+        status={detailsStatus}
+        correctness={detailsCorrectness}
+        search={detailsSearch}
+        isShortAnswerQuestion={isShortAnswerQuestion}
+        recalculating={correctingQuestionId === chartQuestionId}
+        savingReviewId={savingReviewId}
+        onClose={() => setDetailsOpen(false)}
+        onRecalculate={recalculateShortAnswers}
+        onStatusChange={(value) => {
+          setDetailsData(null);
+          setDetailsStatus(value);
+          setDetailsAnswer("");
+          if (value === "not_answered") setDetailsCorrectness("");
+        }}
+        onCorrectnessChange={(value) => {
+          setDetailsData(null);
+          setDetailsStatus(value ? "answered" : "all");
+          setDetailsAnswer("");
+          setDetailsCorrectness(value);
+        }}
+        onSearchChange={(value) => {
+          setDetailsData(null);
+          setDetailsSearch(value);
+        }}
+        onSaveReview={saveInstructorReview}
+        formatSubmittedAt={formatSubmittedAt}
+      />
 
       <Modal open={qrModalOpen} title="Session QR code" onClose={() => setQrModalOpen(false)} panelClassName="max-w-md">
         <div className="grid gap-4 text-center">
@@ -731,7 +1401,7 @@ export function LiveParticipationDashboardPage() {
             <img className="mx-auto h-56 w-56 rounded-[24px] bg-white p-4 shadow-soft" src={session.qr_code_base64} alt="Session QR code" />
           ) : (
             <div className="rounded-[24px] border border-dashed border-role-border bg-role-hover px-4 py-10 text-sm font-bold text-slate-500 dark:bg-slate-950 dark:text-slate-300">
-              QR code is not available for this session.
+              QR code unavailable.
             </div>
           )}
           <div className="rounded-[18px] bg-role-hover p-4 text-left dark:bg-slate-950">
@@ -758,7 +1428,7 @@ export function LiveParticipationDashboardPage() {
               {chartQuestionId ? `Question ${chartQuestionIndex + 1}` : "No question selected"}
             </p>
             <p className="mt-1 text-sm font-semibold text-slate-500 dark:text-slate-400">
-              Students can submit until this timer ends. Restarting resets the answer window.
+              Use this only when you want a countdown. The regular Run button leaves the question open until you reveal or switch questions.
             </p>
           </div>
           <label className="grid gap-2 text-sm font-black text-slate-700 dark:text-slate-200">

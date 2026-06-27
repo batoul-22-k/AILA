@@ -13,6 +13,8 @@ const icons = {
   info: Info,
 };
 
+const MAX_VISIBLE_TOASTS = 3;
+
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
@@ -21,9 +23,14 @@ export function ToastProvider({ children }) {
   }, []);
 
   const showToast = useCallback(
-    ({ title, description, tone = "info", duration = 4200 }) => {
+    ({ title, description, tone = "info", duration = 4200, dedupeKey }) => {
       const id = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
-      setToasts((current) => [...current, { id, title, description, tone }]);
+      setToasts((current) => {
+        const resolvedDedupeKey = dedupeKey || `${tone}:${title || ""}:${description || ""}`;
+        const existing = current.find((toast) => toast.dedupeKey === resolvedDedupeKey);
+        if (existing) return current;
+        return [...current, { id, title, description, tone, dedupeKey: resolvedDedupeKey }].slice(-MAX_VISIBLE_TOASTS);
+      });
       if (duration > 0) window.setTimeout(() => dismissToast(id), duration);
       return id;
     },

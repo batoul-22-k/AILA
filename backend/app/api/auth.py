@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.auth import build_workspaces, make_session_token, public_user, user_id_from_token
+from app.auth import build_workspaces, make_session_token, public_user, user_id_from_token, verify_password
 from app.database import MongoCollections, get_db
 from app.models import LoginRequest, LoginResponse, ProfileUpdateRequest
 from app.services import serialize_document
@@ -12,7 +12,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 @router.post("/login", response_model=LoginResponse)
 async def login(payload: LoginRequest, db: AsyncIOMotorDatabase = Depends(get_db)) -> LoginResponse:
     user = await db[MongoCollections.users].find_one({"email": payload.email.lower().strip()})
-    if not user or user.get("password_hash_placeholder") != payload.password:
+    stored_password = (user.get("password_hash") or user.get("password_hash_placeholder")) if user else None
+    if not user or not verify_password(payload.password, stored_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
     clean_user = serialize_document(user)

@@ -1,11 +1,11 @@
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useEffect, useState } from "react";
 
-import { getClassAnalytics, listClasses } from "../../api/client";
+import { getAdminTrends, getClassAnalytics, listClasses } from "../../api/client";
 import { ChartCard } from "../../components/ChartCard";
 import { DashboardCard } from "../../components/DashboardCard";
 import { PageHeader } from "../../components/PageHeader";
-import { aggregateWeeklyAverages, classAnalyticsRows } from "../../utils/analytics";
+import { classAnalyticsRows } from "../../utils/analytics";
 
 function colorFor(value) {
   if (value >= 80) return "bg-emerald-500";
@@ -16,7 +16,7 @@ function colorFor(value) {
 export function EngagementTrendsPage() {
   const [classes, setClasses] = useState([]);
   const [summaries, setSummaries] = useState([]);
-  const weeklyTrend = aggregateWeeklyAverages(summaries);
+  const [weeklyTrend, setWeeklyTrend] = useState([]);
   const classRows = classAnalyticsRows(classes, summaries);
   const heatmapRows = classRows.map((row) => {
     const summary = summaries.find((item) => item.class_id === row.class_id);
@@ -27,8 +27,12 @@ export function EngagementTrendsPage() {
 
   useEffect(() => {
     async function loadAnalytics() {
-      const classResult = await listClasses({ includeInactive: true }).catch(() => []);
+      const [trendResult, classResult] = await Promise.all([
+        getAdminTrends().catch(() => ({ trends: [] })),
+        listClasses({ includeInactive: true }).catch(() => []),
+      ]);
       const summaryResult = await Promise.all(classResult.map((classDoc) => getClassAnalytics(classDoc.class_id).catch(() => ({ class_id: classDoc.class_id }))));
+      setWeeklyTrend(trendResult.trends || []);
       setClasses(classResult);
       setSummaries(summaryResult);
     }
@@ -39,16 +43,22 @@ export function EngagementTrendsPage() {
     <div className="page-grid">
       <PageHeader eyebrow="Trends" title="Engagement trends and heatmap" description="See how engagement changes by week and class." tone="orange" />
       <ChartCard title="Institution trend" subtitle="Engagement and response volume">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={weeklyTrend}>
-            <XAxis dataKey="week" axisLine={false} tickLine={false} />
-            <YAxis axisLine={false} tickLine={false} domain={[0, 100]} />
-            <Tooltip />
-            <Line type="monotone" dataKey="engagement" stroke="#16a3a3" strokeWidth={3} dot={false} />
-            <Line type="monotone" dataKey="participation" stroke="#8067dc" strokeWidth={3} dot={false} />
-            <Line type="monotone" dataKey="attendance" stroke="#2B7886" strokeWidth={3} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
+        {weeklyTrend.length === 0 ? (
+          <div className="grid h-full min-h-[260px] place-items-center rounded-lg bg-slate-50 p-4 text-sm font-semibold text-slate-500 dark:bg-slate-950 dark:text-slate-300">
+            No weekly engagement trend has been calculated yet.
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={weeklyTrend}>
+              <XAxis dataKey="week" axisLine={false} tickLine={false} />
+              <YAxis axisLine={false} tickLine={false} domain={[0, 100]} />
+              <Tooltip />
+              <Line type="monotone" dataKey="engagement" stroke="#16a3a3" strokeWidth={3} dot={false} />
+              <Line type="monotone" dataKey="participation" stroke="#8067dc" strokeWidth={3} dot={false} />
+              <Line type="monotone" dataKey="attendance" stroke="#2B7886" strokeWidth={3} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
       </ChartCard>
       <DashboardCard>
         <h2 className="text-lg font-black text-slate-950 dark:text-white">Engagement heatmap</h2>

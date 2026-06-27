@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.auth import account_role_for_user, get_current_user, require_admin, require_any_class_role
+from app.auth import account_role_for_user, get_current_user, hash_password, require_admin, require_any_class_role
 from app.database import MongoCollections, get_db
 from app.models import UserCreateRequest, UserOut, utc_now
 from app.services import serialize_document
@@ -42,7 +42,6 @@ async def user_out_from_row(db: AsyncIOMotorDatabase, row: dict, instructor_ids:
                 {"user_id": clean["user_id"], "role": "instructor", "status": "active"}
             )
             clean["account_role"] = "instructor" if membership else "student"
-    clean.pop("global_role", None)
     return UserOut(**clean)
 
 
@@ -96,9 +95,14 @@ async def create_user(
     account = {
         "user_id": await make_account_user_id(db, payload.account_role),
         "name": name,
+        "full_name": name,
         "email": email,
-        "password_hash_placeholder": password,
+        "password_hash": hash_password(password),
         "account_role": payload.account_role,
+        "global_role": payload.account_role,
+        "is_active": True,
+        "created_by_sync": False,
+        "sync_source": "manual",
         "created_at": utc_now(),
     }
     await db[MongoCollections.users].insert_one(account)

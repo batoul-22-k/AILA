@@ -1,43 +1,49 @@
-import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { useEffect, useState } from "react";
 
-import { ChartCard } from "../../components/ChartCard";
+import { getAdminClassesMonitoring, getAdminInstructorsMonitoring } from "../../api/client";
+import { AdminClassMonitoring } from "../../components/admin/AdminClassMonitoring";
+import { AdminInstructorMonitoring } from "../../components/admin/AdminInstructorMonitoring";
+import { DashboardCard } from "../../components/DashboardCard";
 import { PageHeader } from "../../components/PageHeader";
-import { ResponsiveTable, RiskBadge } from "../../components/ResponsiveTable";
-import { classComparison, instructorSnapshot } from "../../data/mockData";
 
 export function InstructorClassComparisonPage() {
+  const [instructors, setInstructors] = useState([]);
+  const [classes, setClasses] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function load() {
+    setLoading(true);
+    setError("");
+    try {
+      const [instructorResult, classResult] = await Promise.all([
+        getAdminInstructorsMonitoring(),
+        getAdminClassesMonitoring(),
+      ]);
+      setInstructors(instructorResult.instructors || []);
+      setClasses(classResult.classes || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load instructor monitoring");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
   return (
     <div className="page-grid">
-      <PageHeader eyebrow="Instructors" title="Instructors overview" description="Compare teaching load, engagement, and response health across instructors." tone="orange" />
-      <ChartCard title="Class engagement comparison" subtitle="Higher is better">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={classComparison}>
-            <XAxis dataKey="className" axisLine={false} tickLine={false} />
-            <YAxis axisLine={false} tickLine={false} />
-            <Tooltip />
-            <Bar dataKey="engagement" fill="#8067dc" radius={[10, 10, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </ChartCard>
-      <ResponsiveTable
-        columns={[
-          { key: "name", label: "Instructor" },
-          { key: "classes", label: "Classes" },
-          { key: "engagement", label: "Engagement", render: (row) => `${row.engagement}%` },
-          { key: "responseRate", label: "Response rate", render: (row) => `${row.responseRate}%` },
-          { key: "focus", label: "Focus class" },
-        ]}
-        rows={instructorSnapshot}
-      />
-      <ResponsiveTable
-        columns={[
-          { key: "instructor", label: "Instructor" },
-          { key: "className", label: "Class" },
-          { key: "engagement", label: "Engagement", render: (row) => `${row.engagement}%` },
-          { key: "risk", label: "Risk", render: (row) => <RiskBadge level={row.risk} /> },
-        ]}
-        rows={classComparison}
-      />
+      <PageHeader eyebrow="Instructors" title="Instructor monitoring" description="Compare teaching load, engagement, reviews, and class support signals." tone="orange" />
+      {loading && <DashboardCard><div className="h-32 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" /></DashboardCard>}
+      {error && <DashboardCard><p className="text-sm font-semibold text-red-600">{error}</p></DashboardCard>}
+      {!loading && !error && (
+        <>
+          <AdminInstructorMonitoring instructors={instructors} />
+          <AdminClassMonitoring classes={classes} />
+        </>
+      )}
     </div>
   );
 }

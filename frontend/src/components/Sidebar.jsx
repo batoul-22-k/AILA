@@ -1,4 +1,4 @@
-import { AlertTriangle, BarChart3, CheckCircle2, Circle, Sparkles } from "lucide-react";
+import { AlertTriangle, BarChart3, CheckCircle2, Circle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
@@ -72,39 +72,69 @@ export function Sidebar({ role }) {
   }, []);
 
   return (
-    <aside className="role-sidebar sticky top-0 hidden h-screen shrink-0 p-4 lg:block">
+    <aside className="role-sidebar fixed left-4 top-4 z-20 hidden h-[calc(100vh-32px)] shrink-0 md:block">
       <div className="flex h-full flex-col">
-        <div className="role-brand-card flex items-center gap-3 border p-3 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/80">
-          <span className={"grid h-12 w-12 place-items-center rounded-full shadow-soft"}>
-            <AilaIcon className="h-8 w-8" />
+        <div className="role-brand-card flex items-center gap-2.5 border p-2.5 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/80">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full shadow-soft">
+            <AilaIcon className="h-7 w-7" />
           </span>
           <div className="min-w-0">
-            <AilaLogo className="w-24 text-[var(--role-text)]" />
+            <AilaLogo className="w-20 text-[var(--role-text)]" />
             <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{meta.workspace}</p>
           </div>
         </div>
 
-        <nav className="subtle-scroll mt-6 grid gap-1.5 overflow-y-auto">
+        <nav className="subtle-scroll mt-4 grid min-h-0 flex-1 content-start gap-1 overflow-y-auto">
           {navigation[role].map((item) => {
             const ItemIcon = item.icon;
-            const forceActive = item.to === "/instructor/analytics" && location.pathname.startsWith("/instructor/at-risk");
+            const forceActive = (item.to === "/instructor/analytics" && location.pathname.startsWith("/instructor/at-risk"))
+              || (item.matchPrefix && location.pathname.startsWith(item.matchPrefix));
             return (
-              <div key={item.to}>
+              <div key={item.to} className="role-nav-group">
                 <NavLink
                   to={item.to}
                   end={item.end}
+                  title={item.label}
+                  aria-disabled={item.strike ? "true" : undefined}
                   className={({ isActive }) =>
                     cn(
-                      "group flex items-center gap-3 rounded-full px-3 py-3 text-sm font-bold transition-all duration-300",
+                      "group flex min-h-10 items-center gap-3 rounded-full px-3 py-2.5 text-sm font-bold transition-all duration-300",
                       isActive || forceActive
                         ? palette.active
                         : "text-slate-600 hover:bg-role-hover hover:text-role-text dark:text-slate-300 dark:hover:bg-slate-900 dark:hover:text-white",
+                      item.strike && "role-nav-disabled opacity-55 hover:bg-transparent hover:text-slate-500 dark:hover:text-slate-400",
                     )
                   }
                 >
-                  <ItemIcon size={18} />
-                  <span className="role-nav-label">{item.label}</span>
+                  <ItemIcon className="shrink-0" size={17} />
+                  <span className={cn("role-nav-label truncate", item.strike && "text-slate-400 line-through decoration-2")}>{item.label}</span>
                 </NavLink>
+
+                {item.children && forceActive && (
+                  <div className="ml-3 mt-2 grid gap-1.5 border-l border-role-border pl-3">
+                    {item.children.map((child) => {
+                      const ChildIcon = child.icon;
+                      return (
+                        <NavLink
+                          key={child.to}
+                          to={child.to}
+                          end={child.end}
+                          className={({ isActive }) =>
+                            cn(
+                              "focus-ring flex min-h-9 items-center gap-2 rounded-full border px-3 py-2 text-xs font-black transition",
+                              isActive
+                                ? "border-role-primary bg-role-hover text-role-primary shadow-sm"
+                                : "border-transparent text-slate-500 hover:bg-role-hover hover:text-role-primary dark:text-slate-300",
+                            )
+                          }
+                        >
+                          <ChildIcon size={14} />
+                          <span className="truncate">{child.label}</span>
+                        </NavLink>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {item.to === "/instructor/classes" && showClassSubnav && (
                   <div className="ml-3 mt-2 grid gap-1.5 border-l border-role-border pl-3">
@@ -145,7 +175,7 @@ export function Sidebar({ role }) {
                             !active && !complete && "text-slate-500 dark:text-slate-300",
                           )}
                         >
-                          {complete ? <CheckCircle2 size={14} /> : active ? <Sparkles size={14} /> : <Circle size={12} />}
+                          {complete ? <CheckCircle2 size={14} /> : <Circle size={active ? 14 : 12} />}
                           <span className="truncate">{step.label}</span>
                         </div>
                       );

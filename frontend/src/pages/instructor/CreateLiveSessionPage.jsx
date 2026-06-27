@@ -1,4 +1,4 @@
-import { Copy, ExternalLink, QrCode, Radio, RotateCcw, StopCircle, Trash2 } from "lucide-react";
+import { CheckCircle2, Copy, ExternalLink, QrCode, Radio, RotateCcw, StopCircle, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -64,17 +64,28 @@ export function CreateLiveSessionPage() {
   const classNames = Object.fromEntries(classes.map((classDoc) => [classDoc.class_id, classDoc.name]));
   const activeCount = sessions.filter((session) => session.status === "active").length;
   const scheduledCount = sessions.filter((session) => session.status === "scheduled").length;
-  const closedCount = sessions.filter((session) => session.status === "closed").length;
+  const stoppedCount = sessions.filter((session) => session.status === "closed").length;
+  const completedCount = sessions.filter((session) => session.status === "finished").length;
 
   function getSessionTone(status) {
     if (status === "active") return "green";
     if (status === "scheduled") return "gold";
+    if (status === "finished") return "emerald";
     return "slate";
+  }
+
+  function getSessionLabel(status) {
+    if (status === "active") return "Active";
+    if (status === "scheduled") return "Scheduled";
+    if (status === "closed") return "Stopped";
+    if (status === "finished") return "Finished";
+    return status;
   }
 
   function getSessionActionLabel(status) {
     if (status === "scheduled") return "Start now";
     if (status === "closed") return "Reopen";
+    if (status === "finished") return "Completed";
     return "Stop session";
   }
 
@@ -146,7 +157,7 @@ export function CreateLiveSessionPage() {
     try {
       localStorage.setItem("instructorSelectedClassId", classId);
       const questionIds = await loadApprovedQuestionIds(classId);
-      if (questionIds.length === 0) throw new Error("Approve generated questions before creating a live session.");
+      if (questionIds.length === 0) throw new Error("Approve questions first.");
       const payload = {
         instructor_id: user?.user_id,
         class_id: classId,
@@ -156,10 +167,10 @@ export function CreateLiveSessionPage() {
       const session = await createInstructorSession(payload);
       localStorage.setItem("instructorSession", JSON.stringify(session));
       setCreated(session);
-      showToast({ title: "Session created", description: session.status === "scheduled" ? `Session ${session.session_code} is scheduled.` : `Session ${session.session_code} is active.`, tone: "success" });
+      showToast({ title: session.status === "scheduled" ? "Session scheduled" : "Session started", tone: "success" });
       await loadSessions();
     } catch (err) {
-      showToast({ title: "Could not create session", description: err instanceof Error ? err.message : "Could not create session", tone: "error" });
+      showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : undefined, tone: "error" });
     } finally {
       setLoading(false);
     }
@@ -174,12 +185,11 @@ export function CreateLiveSessionPage() {
       if (savedSession?.session_id === updated.session_id) localStorage.setItem("instructorSession", JSON.stringify(updated));
       if (created?.session_id === updated.session_id) setCreated(updated);
       showToast({
-        title: status === "closed" ? "Session stopped" : "Session reopened",
-        description: status === "closed" ? `Session ${updated.session_code} stopped. Students can no longer join.` : `Session ${updated.session_code} reopened.`,
+        title: status === "closed" ? "Session stopped" : "Session started",
         tone: "success",
       });
     } catch (err) {
-      showToast({ title: "Could not update session", description: err instanceof Error ? err.message : "Could not update session", tone: "error" });
+      showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : undefined, tone: "error" });
     } finally {
       setUpdatingSessionId("");
     }
@@ -204,13 +214,9 @@ export function CreateLiveSessionPage() {
         removeStoredQuestions(classId, result.deleted_question_ids);
         setApprovedQuestionIds(nextApprovedIds);
       }
-      showToast({
-        title: "Session deleted",
-        description: `${session.session_code} was removed with its session data and unused attached questions.`,
-        tone: "success",
-      });
+      showToast({ title: "Session deleted", tone: "success" });
     } catch (err) {
-      showToast({ title: "Could not delete session", description: err instanceof Error ? err.message : "Could not delete session", tone: "error" });
+      showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : undefined, tone: "error" });
     } finally {
       setDeletingSessionId("");
     }
@@ -219,9 +225,9 @@ export function CreateLiveSessionPage() {
   async function handleCopyJoinLink(session) {
     try {
       await navigator.clipboard.writeText(session.join_link);
-      showToast({ title: "Join link copied", description: `Join link copied for ${session.session_code}.`, tone: "success" });
+      showToast({ title: "Copied", tone: "success" });
     } catch {
-      showToast({ title: "Could not copy join link", description: "The join link could not be copied to the clipboard.", tone: "error" });
+      showToast({ title: "Something went wrong", tone: "error" });
     }
   }
 
@@ -233,17 +239,17 @@ export function CreateLiveSessionPage() {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      showToast({ title: "QR downloaded", description: `QR code downloaded for ${session.session_code}.`, tone: "success" });
+      showToast({ title: "QR ready", tone: "success" });
     } catch (err) {
-      showToast({ title: "Could not download QR", description: err instanceof Error ? err.message : "Could not download QR code", tone: "error" });
+      showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : undefined, tone: "error" });
     }
   }
 
   return (
     <div className="page-grid">
-      <PageHeader eyebrow="Live sessions" title="Create a classroom session" description="Create a live session from approved questions. The backend generates the session code and QR join link." tone="role" />
+      <PageHeader title="Sessions" description="Create and manage live sessions." tone="role" />
 
-      {approvedQuestionIds.length === 0 && !questionsLoading && <EmptyState title="No approved questions" description="Approve generated questions before creating a live session." />}
+      {approvedQuestionIds.length === 0 && !questionsLoading && <EmptyState title="No approved questions" description="Review questions before starting." />}
 
       <DashboardCard>
         <form className="grid gap-4" onSubmit={handleCreate}>
@@ -259,7 +265,7 @@ export function CreateLiveSessionPage() {
             </select>
           </label>
           <label className="grid gap-1.5 text-sm font-semibold text-slate-700 dark:text-slate-200">
-            Start date & time
+            Start time
             <input
               type="datetime-local"
               className="adaptive-input focus-ring h-11 border px-3 text-sm"
@@ -269,37 +275,41 @@ export function CreateLiveSessionPage() {
             />
           </label>
           <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">
-            {questionsLoading ? "Checking approved questions..." : `${approvedQuestionIds.length} approved questions will be used.`}
+            {questionsLoading ? "Checking questions..." : `${approvedQuestionIds.length} approved questions`}
           </p>
           <Button className="w-fit" type="submit" variant="role" loading={loading || questionsLoading} disabled={approvedQuestionIds.length === 0 || questionsLoading}>
             <Radio size={18} />
-            {scheduledFor ? "Schedule session" : "Create session"}
+            {scheduledFor ? "Schedule" : "Create"}
           </Button>
         </form>
       </DashboardCard>
 
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <DashboardCard>
-          <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Active sessions</p>
+          <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Active</p>
           <p className="mt-2 text-3xl font-black text-slate-950 dark:text-white">{activeCount}</p>
         </DashboardCard>
         <DashboardCard>
-          <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Scheduled sessions</p>
+          <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Scheduled</p>
           <p className="mt-2 text-3xl font-black text-slate-950 dark:text-white">{scheduledCount}</p>
         </DashboardCard>
         <DashboardCard>
-          <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Closed sessions</p>
-          <p className="mt-2 text-3xl font-black text-slate-950 dark:text-white">{closedCount}</p>
+          <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Stopped</p>
+          <p className="mt-2 text-3xl font-black text-slate-950 dark:text-white">{stoppedCount}</p>
         </DashboardCard>
         <DashboardCard>
-          <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Total sessions</p>
+          <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Finished</p>
+          <p className="mt-2 text-3xl font-black text-slate-950 dark:text-white">{completedCount}</p>
+        </DashboardCard>
+        <DashboardCard>
+          <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">Total</p>
           <p className="mt-2 text-3xl font-black text-slate-950 dark:text-white">{sessions.length}</p>
         </DashboardCard>
       </div>
 
       {created && (
         <DashboardCard className="text-center">
-          <Badge tone={getSessionTone(created.status)}>{created.status}</Badge>
+          <Badge tone={getSessionTone(created.status)}>{getSessionLabel(created.status)}</Badge>
           <p className="mt-4 text-sm font-black uppercase tracking-wide text-slate-500">Session code</p>
           <p className="mt-2 text-5xl font-black tracking-[0.22em] text-slate-900 dark:text-white">{created.session_code}</p>
           {created.scheduled_for && (
@@ -316,8 +326,13 @@ export function CreateLiveSessionPage() {
           </div>
           {created.status === "active" ? (
             <Link className="mt-5 inline-flex" to={`/instructor/live/${created.session_id}`}>
-              <Button variant="role">Open live dashboard</Button>
+              <Button variant="role">Open live</Button>
             </Link>
+          ) : created.status === "finished" ? (
+            <Button className="mt-5" variant="outline" type="button" disabled>
+              <CheckCircle2 size={16} />
+              Finished
+            </Button>
           ) : (
             <Button className="mt-5" variant="role" type="button" onClick={() => handleStatusChange(created, "active")} loading={updatingSessionId === created.session_id}>
               <RotateCcw size={16} />
@@ -329,8 +344,7 @@ export function CreateLiveSessionPage() {
 
       <div className="grid gap-3">
         <div>
-          <h2 className="text-lg font-black text-slate-950 dark:text-white">Session Management</h2>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Stop sessions when class ends, reopen them if you need to continue, and copy join links for sharing.</p>
+          <h2 className="text-lg font-black text-slate-950 dark:text-white">Recent sessions</h2>
         </div>
         {sessions.map((session) => (
           <DashboardCard key={session.session_id}>
@@ -339,7 +353,7 @@ export function CreateLiveSessionPage() {
                 <div className="flex items-center gap-2">
                   <QrCode size={18} className="text-role-text" />
                   <h2 className="font-black text-slate-900 dark:text-white">{session.session_code}</h2>
-                  <Badge tone={getSessionTone(session.status)}>{session.status}</Badge>
+                  <Badge tone={getSessionTone(session.status)}>{getSessionLabel(session.status)}</Badge>
                 </div>
                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                   {classNames[session.class_id] ?? session.class_id} · {session.question_ids.length} questions
@@ -352,8 +366,8 @@ export function CreateLiveSessionPage() {
                 <p className="mt-2 break-all text-xs font-semibold text-slate-500 dark:text-slate-400">{session.join_link}</p>
               </div>
               <div className="flex flex-wrap gap-2 lg:max-w-64 lg:justify-end">
-                <Link to={`/instructor/live/${session.session_id}`} title="Open live dashboard" aria-label={`Open session ${session.session_code}`}>
-                  <Button size="icon" variant="outline" type="button" title="Open live dashboard" aria-label="Open live dashboard">
+                <Link to={`/instructor/live/${session.session_id}`} title="Open live" aria-label={`Open session ${session.session_code}`}>
+                  <Button size="icon" variant="outline" type="button" title="Open live" aria-label="Open live">
                     <ExternalLink size={16} />
                   </Button>
                 </Link>
@@ -374,6 +388,17 @@ export function CreateLiveSessionPage() {
                     onClick={() => handleStatusChange(session, "closed")}
                   >
                     <StopCircle size={16} />
+                  </Button>
+                ) : session.status === "finished" ? (
+                  <Button
+                    size="icon"
+                    type="button"
+                    variant="outline"
+                    title="Session completed"
+                    aria-label="Session completed"
+                    disabled
+                  >
+                    <CheckCircle2 size={16} />
                   </Button>
                 ) : (
                   <Button

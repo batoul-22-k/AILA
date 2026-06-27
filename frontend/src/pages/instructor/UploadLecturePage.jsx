@@ -35,9 +35,9 @@ export function UploadLecturePage() {
       localStorage.setItem("instructorUploadId", result.upload_id);
       localStorage.setItem("instructorExtractedText", result.cleaned_text || result.extracted_text || "");
       setUpload(result);
-      showToast({ title: "Lecture uploaded", description: "Text was extracted and is ready for question generation.", tone: "success" });
+      showToast({ title: "Uploaded", tone: "success" });
     } catch (err) {
-      showToast({ title: "Upload failed", description: err instanceof Error ? err.message : "Upload failed", tone: "error" });
+      showToast({ title: "Something went wrong", description: err instanceof Error ? err.message : "Upload failed", tone: "error" });
     } finally {
       setLoading(false);
     }
@@ -45,7 +45,7 @@ export function UploadLecturePage() {
 
   return (
     <div className="page-grid">
-      <PageHeader eyebrow="Lecture material" title="Upload lecture material" description="Upload a PPTX or PDF. The backend extracts readable content and prepares it for AI question generation." tone="role" />
+      <PageHeader title="Upload" description="Add lecture material." tone="role" />
 
       <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
         <DashboardCard
@@ -69,8 +69,7 @@ export function UploadLecturePage() {
             <span className="mx-auto grid h-14 w-14 place-items-center rounded-smart bg-role-hover text-role-text">
               <UploadCloud size={28} />
             </span>
-            <h2 className="mt-4 text-xl font-black text-slate-900 dark:text-white">Drop PPTX or PDF here</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">The upload is processed by FastAPI, PyMuPDF, and python-pptx.</p>
+            <h2 className="mt-4 text-xl font-black text-slate-900 dark:text-white">Drop a PPTX or PDF</h2>
             <label className="mt-5 inline-flex cursor-pointer">
               <input className="sr-only" type="file" accept=".pdf,.pptx" onChange={(event) => handleFile(event.target.files?.[0])} />
               <span className="rounded-smart bg-role-accent px-4 py-2 text-sm font-bold text-white shadow-soft">Choose file</span>
@@ -81,7 +80,7 @@ export function UploadLecturePage() {
         <DashboardCard>
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-lg font-black text-slate-900 dark:text-white">Extraction status</h2>
+              <h2 className="text-lg font-black text-slate-900 dark:text-white">Status</h2>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{file ? file.name : "No file selected"}</p>
             </div>
             <Badge tone={upload?.status === "extracted" ? "green" : loading ? "gold" : "slate"}>{upload?.status || (loading ? "processing" : "waiting")}</Badge>
@@ -94,7 +93,7 @@ export function UploadLecturePage() {
               </div>
               <Button className="mt-4" type="button" variant="role" loading={loading} onClick={handleUpload}>
                 <UploadCloud size={18} />
-                Upload and extract
+                Upload
               </Button>
             </div>
           )}
@@ -102,9 +101,9 @@ export function UploadLecturePage() {
           {upload?.cleaned_text && (
             <div className="mt-5">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <p className="text-sm font-black text-slate-800 dark:text-white">Extracted text preview</p>
+                <p className="text-sm font-black text-slate-800 dark:text-white">Preview</p>
                 <Link to="/instructor/generate">
-                  <Button size="sm" variant="role">Generate questions</Button>
+                  <Button size="sm" variant="role">Questions</Button>
                 </Link>
               </div>
               <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-smart bg-slate-50 p-4 text-xs leading-6 text-slate-600 dark:bg-slate-950 dark:text-slate-300">
@@ -115,7 +114,7 @@ export function UploadLecturePage() {
         </DashboardCard>
       </div>
 
-      {!upload && <EmptyState icon={FileText} title="No extracted content yet" description="Upload a lecture file to unlock AI question generation." />}
+      {!upload && <EmptyState icon={FileText} title="No content yet" description="Upload a file to begin." />}
     </div>
   );
 }

@@ -1,15 +1,26 @@
-from datetime import timedelta
 import random
 import string
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.auth import account_role_for_user, get_current_user, require_class_role
+from app.auth import account_role_for_user, get_current_user, require_account_class_role
 from app.analytics_services import recalculate_class_analytics
 from app.database import MongoCollections, get_db, get_database
+from app.gamification_service import award_bulk_reward_transaction, award_rule_event, build_session_reward_summary
 from app.models import CreateSessionRequest, JoinSessionRequest, LiveQuestionOut, SessionOut, new_id, utc_now
 from app.realtime import manager
+from app.response_scoring import (
+    ai_evaluation_from_result,
+    default_instructor_review,
+    final_is_correct,
+    final_response_label,
+    final_response_score,
+    final_stars_earned,
+    get_ai_evaluation,
+    get_instructor_review,
+)
+from app.semantic_service import evaluate_short_answer
 from app.services import generate_unique_session_code, get_live_session_stats, serialize_document
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -31,9 +42,15 @@ async def has_class_role(db: AsyncIOMotorDatabase, user: dict, class_id: str, ro
 
 
 async def require_session_instructor(db: AsyncIOMotorDatabase, user: dict, session: dict) -> None:
-    # TODO: Replace this class-role check with strict JWT/RBAC policy before production.
-    if not await has_class_role(db, user, session["class_id"], "instructor"):
-        raise HTTPException(status_code=403, detail="Instructor session permission required")
+    await require_account_class_role(db, user, session["class_id"], "instructor")
+    if session.get("instructor_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Instructor permission required for your own session")
+
+
+async def require_session_report_viewer(db: AsyncIOMotorDatabase, user: dict, session: dict) -> None:
+    if account_role_for_user(user) == "admin":
+        return
+    await require_session_instructor(db, user, session)
 
 
 async def load_session_question_rows(db: AsyncIOMotorDatabase, question_ids: list[str]) -> dict[str, dict]:
@@ -73,7 +90,7 @@ async def create_live_session(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> SessionOut:
-    await require_class_role(db, user, payload.class_id, "instructor")
+    await require_account_class_role(db, user, payload.class_id, "instructor")
     class_doc = await db[MongoCollections.classes].find_one({"class_id": payload.class_id})
     if class_doc and class_doc.get("status", "active") in {"archived", "inactive"}:
         raise HTTPException(status_code=400, detail="Activate this class before creating a live session.")
@@ -82,18 +99,17 @@ async def create_live_session(
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    started_at = utc_now() if payload.question_ids else None
     session = SessionOut(
         session_id=new_id("session"),
         class_id=payload.class_id,
         instructor_id=user["user_id"],
         question_ids=payload.question_ids,
-        active_question_id=payload.question_ids[0] if payload.question_ids else None,
+        active_question_id=None,
         session_code=session_code,
         status="active",
-        question_started_at=started_at,
-        question_duration_seconds=180 if started_at else None,
-        question_ends_at=started_at + timedelta(seconds=180) if started_at else None,
+        question_started_at=None,
+        question_duration_seconds=None,
+        question_ends_at=None,
         revealed_question_ids=[],
         created_at=utc_now(),
     )
@@ -116,7 +132,7 @@ async def join_session_by_code(
     class_doc = await db[MongoCollections.classes].find_one({"class_id": session["class_id"]})
     if class_doc and class_doc.get("status", "active") in {"archived", "inactive"}:
         raise HTTPException(status_code=403, detail="This class is inactive")
-    await require_class_role(db, user, session["class_id"], "student")
+    await require_account_class_role(db, user, session["class_id"], "student")
 
     await db[MongoCollections.participation_records].update_one(
         {"session_id": session["session_id"], "student_id": user["user_id"]},
@@ -130,6 +146,16 @@ async def join_session_by_code(
             },
         },
         upsert=True,
+    )
+    await award_rule_event(
+        db,
+        student_id=user["user_id"],
+        class_id=session["class_id"],
+        session_id=session["session_id"],
+        event_type="join_session",
+        source_type="session",
+        source_id=session["session_id"],
+        idempotency_key=f"{user['user_id']}:{session['session_id']}:join_session",
     )
 
     stats = await get_live_session_stats(db, session["session_id"])
@@ -159,15 +185,17 @@ async def get_live_session(
         student_membership = await db[MongoCollections.class_memberships].find_one(
             {"class_id": session["class_id"], "user_id": user["user_id"], "role": "student", "status": "active"}
         )
+        if instructor_membership and session.get("instructor_id") != user["user_id"]:
+            raise HTTPException(status_code=403, detail="Instructor permission required for your own session")
         if not instructor_membership and not student_membership:
             raise HTTPException(status_code=403, detail="Session permission required")
     clean = serialize_document(session)
-    clean.setdefault("active_question_id", clean.get("question_ids", [None])[0] if clean.get("question_ids") else None)
+    clean.setdefault("active_question_id", None)
     clean.setdefault("revealed_question_ids", [])
     clean.setdefault("question_started_at", None)
     clean.setdefault("question_duration_seconds", None)
     clean.setdefault("question_ends_at", None)
-    if clean.get("status") == "scheduled":
+    if clean.get("status") == "scheduled" and account_role_for_user(user) == "student":
         raise HTTPException(status_code=404, detail="Active session not found")
     return SessionOut(**clean)
 
@@ -181,8 +209,18 @@ async def get_session_questions(
     session = await db[MongoCollections.sessions].find_one({"session_id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    is_instructor = await has_class_role(db, user, session["class_id"], "instructor")
-    is_student = await has_class_role(db, user, session["class_id"], "student")
+    account_role = account_role_for_user(user)
+    is_admin = account_role == "admin"
+    is_instructor = False
+    is_student = False
+    if is_admin:
+        is_instructor = True
+    elif account_role == "instructor":
+        await require_session_instructor(db, user, session)
+        is_instructor = True
+    elif account_role == "student":
+        await require_account_class_role(db, user, session["class_id"], "student")
+        is_student = True
     if not is_instructor and not is_student:
         raise HTTPException(status_code=403, detail="Session permission required")
 
@@ -210,6 +248,12 @@ async def get_session_questions(
             elif clean_reward.get("badge_earned"):
                 badge_reward = clean_reward
 
+    def visible_instructor_feedback(response: dict) -> str | None:
+        review = get_instructor_review(response)
+        if review.get("reviewed") and review.get("showToStudent") and review.get("feedback"):
+            return review.get("feedback")
+        return None
+
     return [
         LiveQuestionOut(
             question_id=row["question_id"],
@@ -223,11 +267,12 @@ async def get_session_questions(
             explanation=row.get("explanation") if is_instructor or row["question_id"] in revealed_question_ids else None,
             is_revealed=row["question_id"] in revealed_question_ids,
             student_answer=responses_by_question.get(row["question_id"], {}).get("answer"),
-            is_correct=responses_by_question.get(row["question_id"], {}).get("is_correct") if row["question_id"] in revealed_question_ids else None,
+            is_correct=final_is_correct(responses_by_question.get(row["question_id"], {})) if row["question_id"] in revealed_question_ids else None,
             stars_earned=int(rewards_by_question.get(row["question_id"], {}).get("stars_earned") or 0) if row["question_id"] in revealed_question_ids else 0,
             session_stars=session_stars,
             badge_earned=bool(badge_reward),
             badge_type=badge_reward.get("badge_type") if badge_reward else None,
+            instructor_feedback=visible_instructor_feedback(responses_by_question.get(row["question_id"], {})) if row["question_id"] in revealed_question_ids else None,
         )
         for question_id in question_ids
         if (row := questions_by_id.get(question_id))
@@ -271,6 +316,127 @@ async def reveal_session_question(
     return payload
 
 
+@router.post("/{session_id}/questions/{question_id}/correct-short-answers")
+async def correct_short_answer_responses(
+    session_id: str,
+    question_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    session = await db[MongoCollections.sessions].find_one({"session_id": session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await require_session_instructor(db, user, session)
+    if question_id not in session.get("question_ids", []):
+        raise HTTPException(status_code=400, detail="Question is not part of this session")
+
+    questions_by_id = await load_session_question_rows(db, [question_id])
+    question = questions_by_id.get(question_id)
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    if question.get("type") != "short_answer":
+        raise HTTPException(status_code=400, detail="Only short-answer questions can be corrected this way")
+
+    responses = await db[MongoCollections.responses].find(
+        {"session_id": session_id, "question_id": question_id}
+    ).to_list(length=None)
+    now = utc_now()
+    counts = {"correct": 0, "partial": 0, "incorrect": 0}
+    for response in responses:
+        semantic_result = evaluate_short_answer(question.get("correct_answer", ""), response.get("answer", ""))
+        ai_evaluation = ai_evaluation_from_result(semantic_result, now)
+        semantic_label = ai_evaluation.get("label")
+        if semantic_label in counts:
+            counts[semantic_label] += 1
+        instructor_review = get_instructor_review(response)
+        if not response.get("instructorReview"):
+            instructor_review = default_instructor_review()
+        reviewed_response = {
+            **response,
+            "aiEvaluation": ai_evaluation,
+            "instructorReview": instructor_review,
+            "semantic_score": ai_evaluation["finalScore"],
+            "semantic_label": ai_evaluation["label"],
+            "final_score": ai_evaluation["finalScore"],
+        }
+        if instructor_review.get("reviewed"):
+            reviewed_response["semantic_score"] = instructor_review.get("finalScore")
+            reviewed_response["final_score"] = instructor_review.get("finalScore")
+            reviewed_response["semantic_label"] = instructor_review.get("finalLabel")
+        is_correct = final_is_correct(reviewed_response)
+        stars_earned = final_stars_earned(reviewed_response)
+        await db[MongoCollections.responses].update_one(
+            {"response_id": response["response_id"]},
+            {
+                "$set": {
+                    "aiEvaluation": ai_evaluation,
+                    "instructorReview": instructor_review,
+                    "semantic_similarity": ai_evaluation.get("semanticSimilarity"),
+                    "concept_coverage": ai_evaluation.get("conceptCoverage"),
+                    "semantic_engine": ai_evaluation.get("engine"),
+                    "weights": ai_evaluation.get("weights") or {},
+                    "semantic_score": final_response_score(reviewed_response),
+                    "final_score": final_response_score(reviewed_response),
+                    "semantic_label": final_response_label(reviewed_response),
+                    "is_correct": is_correct,
+                    "stars_earned": stars_earned,
+                    "updated_at": now,
+                }
+            },
+        )
+        await db[MongoCollections.student_rewards].update_one(
+            {"session_id": session_id, "question_id": question_id, "student_id": response["student_id"]},
+            {
+                "$set": {
+                    "stars_earned": stars_earned,
+                    "badge_earned": False,
+                    "badge_type": None,
+                    "is_correct": is_correct,
+                    "updated_at": now,
+                },
+                "$setOnInsert": {
+                    "reward_id": new_id("reward"),
+                    "session_id": session_id,
+                    "student_id": response["student_id"],
+                    "question_id": question_id,
+                    "created_at": now,
+                },
+            },
+            upsert=True,
+        )
+        if is_correct is True:
+            await award_rule_event(
+                db,
+                student_id=response["student_id"],
+                class_id=session["class_id"],
+                session_id=session_id,
+                question_id=question_id,
+                event_type="correct_answer",
+                source_type="question",
+                source_id=question_id,
+                idempotency_key=f"{response['response_id']}:correct_answer",
+                metadata={"review_source": "semantic"},
+            )
+        # Partial short-answer rewards are intentionally not awarded until a partial_answer rule is defined.
+
+    await db[MongoCollections.sessions].update_one(
+        {"session_id": session_id},
+        {"$set": {"updated_at": now}},
+    )
+    stats = await get_live_session_stats(db, session_id)
+    payload = {
+        "session_id": session_id,
+        "question_id": question_id,
+        "corrected_count": len(responses),
+        "semantic_counts": counts,
+        "stats": stats.model_dump(mode="json"),
+    }
+    await manager.broadcast(session_id, {"type": "short_answers_corrected", "payload": payload})
+    await manager.broadcast(session_id, {"type": "session_stats", "payload": stats.model_dump(mode="json")})
+    await recalculate_class_analytics(db, session["class_id"])
+    return payload
+
+
 @router.post("/{session_id}/finish")
 async def finish_live_session(
     session_id: str,
@@ -290,13 +456,62 @@ async def finish_live_session(
         key = (response.get("student_id"), response.get("question_id"))
         if key[0] and key[1] and key not in latest_by_student_question:
             latest_by_student_question[key] = serialize_document(response)
+    participation_rows = await db[MongoCollections.participation_records].find(
+        {"session_id": session_id},
+        {"student_id": 1},
+    ).to_list(length=None)
+    participated_ids = {
+        row["student_id"]
+        for row in participation_rows
+        if row.get("student_id")
+    } | {
+        student_id
+        for student_id, _question_id in latest_by_student_question
+        if student_id
+    }
 
     rewards = []
     now = utc_now()
     for student_id in roster_ids:
         student_responses = [latest_by_student_question.get((student_id, question_id)) for question_id in question_ids]
-        total_stars = sum(int(response.get("stars_earned") or 0) for response in student_responses if response)
-        answered_all_correctly = bool(question_ids) and all(response and response.get("is_correct") for response in student_responses)
+        total_stars = sum(final_stars_earned(response) for response in student_responses if response)
+        answered_all_correctly = bool(question_ids) and all(response and final_is_correct(response) for response in student_responses)
+        gamification_summary = None
+        if student_id in participated_ids:
+            reward_events = [
+                {
+                    "student_id": student_id,
+                    "class_id": session["class_id"],
+                    "session_id": session_id,
+                    "event_type": "complete_session",
+                    "source_type": "session",
+                    "source_id": session_id,
+                    "idempotency_key": f"{student_id}:{session_id}:complete_session",
+                }
+            ]
+            if answered_all_correctly:
+                reward_events.append(
+                    {
+                        "student_id": student_id,
+                        "class_id": session["class_id"],
+                        "session_id": session_id,
+                        "event_type": "perfect_session",
+                        "source_type": "session",
+                        "source_id": session_id,
+                        "idempotency_key": f"{student_id}:{session_id}:perfect_session",
+                    }
+                )
+            await award_bulk_reward_transaction(
+                db,
+                transaction_id=f"session_finish:{session_id}:{student_id}",
+                reward_events=reward_events,
+            )
+            gamification_summary = await build_session_reward_summary(
+                db,
+                student_id=student_id,
+                class_id=session["class_id"],
+                session_id=session_id,
+            )
         reward_doc = {
             "session_id": session_id,
             "student_id": student_id,
@@ -307,6 +522,8 @@ async def finish_live_session(
             "created_at": now,
             "updated_at": now,
         }
+        if gamification_summary:
+            reward_doc["gamification_summary"] = gamification_summary
         await db[MongoCollections.student_rewards].update_one(
             {"session_id": session_id, "student_id": student_id, "question_id": None},
             {"$set": reward_doc, "$setOnInsert": {"reward_id": new_id("reward")}},
@@ -320,7 +537,7 @@ async def finish_live_session(
     ).to_list(length=None)
     names_by_id = {row["user_id"]: row.get("name") or row["user_id"] for row in users}
     answered_responses = [response for response in latest_by_student_question.values() if response.get("question_id") in question_ids]
-    correct_count = sum(1 for response in answered_responses if response.get("is_correct"))
+    correct_count = sum(1 for response in answered_responses if final_is_correct(response))
     average_correctness = round((correct_count / len(answered_responses)) * 100, 1) if answered_responses else 0.0
     top_stars = sorted(
         [{"student_id": reward["student_id"], "student_name": names_by_id.get(reward["student_id"], reward["student_id"]), "stars": reward["stars_earned"]} for reward in rewards],
@@ -362,15 +579,7 @@ async def get_session_statistics(
     session = await db[MongoCollections.sessions].find_one({"session_id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    if account_role_for_user(user) != "admin":
-        instructor_membership = await db[MongoCollections.class_memberships].find_one(
-            {"class_id": session["class_id"], "user_id": user["user_id"], "role": "instructor", "status": "active"}
-        )
-        student_membership = await db[MongoCollections.class_memberships].find_one(
-            {"class_id": session["class_id"], "user_id": user["user_id"], "role": "student", "status": "active"}
-        )
-        if not instructor_membership and not student_membership:
-            raise HTTPException(status_code=403, detail="Session permission required")
+    await require_session_report_viewer(db, user, session)
     stats = await get_live_session_stats(db, session_id)
     return stats.model_dump(mode="json")
 
@@ -389,12 +598,7 @@ async def get_session_response_details(
     session = await db[MongoCollections.sessions].find_one({"session_id": session_id})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    if account_role_for_user(user) != "admin":
-        instructor_membership = await db[MongoCollections.class_memberships].find_one(
-            {"class_id": session["class_id"], "user_id": user["user_id"], "role": "instructor", "status": "active"}
-        )
-        if not instructor_membership:
-            raise HTTPException(status_code=403, detail="Instructor session permission required")
+    await require_session_report_viewer(db, user, session)
 
     selected_question_id = question_id or session.get("active_question_id")
     if not selected_question_id and session.get("question_ids"):
@@ -447,21 +651,37 @@ async def get_session_response_details(
     rows: list[dict] = []
     for student_id, response in latest_response_by_student.items():
         selected_answer = response.get("answer")
+        semantic_label = final_response_label(response)
+        is_correct = final_is_correct(response)
+        final_score = final_response_score(response)
         if answer is not None and selected_answer != answer:
             continue
-        if correctness == "correct" and response.get("is_correct") is not True:
+        if correctness == "correct" and is_correct is not True:
             continue
-        if correctness == "incorrect" and response.get("is_correct") is not False:
+        if correctness == "partial" and semantic_label != "partial":
+            continue
+        if correctness == "pending" and (semantic_label is not None or is_correct is not None):
+            continue
+        if correctness == "incorrect" and (
+            (semantic_label in {"correct", "partial", "incorrect"} and semantic_label != "incorrect")
+            or (semantic_label not in {"correct", "partial", "incorrect"} and is_correct is not False)
+        ):
             continue
         row = {
+            "response_id": response.get("response_id"),
             "student_name": student_name(student_id),
             "student_id": student_id,
             "email": users_by_id.get(student_id, {}).get("email"),
             "selected_answer": selected_answer,
             "submitted_at": response.get("submitted_at"),
             "confidence_level": response.get("confidence_level"),
-            "is_correct": response.get("is_correct"),
-            "stars_earned": response.get("stars_earned", 0),
+            "is_correct": is_correct,
+            "semantic_score": final_score,
+            "semantic_label": semantic_label,
+            "semantic_engine": response.get("semantic_engine") or get_ai_evaluation(response).get("engine"),
+            "aiEvaluation": get_ai_evaluation(response),
+            "instructorReview": get_instructor_review(response),
+            "stars_earned": final_stars_earned(response),
             "status": "answered",
         }
         if status_filter in {"all", "answered"} and matches_search(row):
@@ -490,8 +710,22 @@ async def get_session_response_details(
     answered_count = len(answered_ids)
     not_answered_count = max(total_students - answered_count, 0)
     response_rate = round((answered_count / total_students) * 100, 2) if total_students else 0.0
-    correct_count = sum(1 for response in latest_response_by_student.values() if response.get("is_correct") is True)
-    incorrect_count = sum(1 for response in latest_response_by_student.values() if response.get("is_correct") is False)
+    correct_count = sum(1 for response in latest_response_by_student.values() if final_is_correct(response) is True)
+    partial_count = sum(
+        1
+        for response in latest_response_by_student.values()
+        if final_response_label(response) == "partial"
+    )
+    pending_count = sum(
+        1
+        for response in latest_response_by_student.values()
+        if final_response_label(response) is None and final_is_correct(response) is None
+    )
+    incorrect_count = sum(
+        1
+        for response in latest_response_by_student.values()
+        if final_is_correct(response) is False and final_response_label(response) != "partial"
+    )
 
     return {
         "session_id": session_id,
@@ -507,6 +741,8 @@ async def get_session_response_details(
             "response_rate": response_rate,
             "correct": correct_count,
             "incorrect": incorrect_count,
+            "partial": partial_count,
+            "pending": pending_count,
         },
     }
 

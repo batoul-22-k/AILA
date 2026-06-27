@@ -1,0 +1,110 @@
+{
+  "accuracy": 0.957,
+  "class_distribution": {
+    "high": 2000,
+    "low": 4500,
+    "medium": 3500
+  },
+  "classification_report": {
+    "accuracy": 0.957,
+    "high": {
+      "f1-score": 0.934487021013597,
+      "precision": 0.9242053789731052,
+      "recall": 0.945,
+      "support": 400.0
+    },
+    "low": {
+      "f1-score": 0.9816564758198999,
+      "precision": 0.982202447163515,
+      "recall": 0.9811111111111112,
+      "support": 900.0
+    },
+    "macro avg": {
+      "f1-score": 0.9514539625460315,
+      "precision": 0.9500164815445767,
+      "recall": 0.9529894179894179,
+      "support": 2000.0
+    },
+    "medium": {
+      "f1-score": 0.9382183908045977,
+      "precision": 0.9436416184971098,
+      "recall": 0.9328571428571428,
+      "support": 700.0
+    },
+    "weighted avg": {
+      "f1-score": 0.9570192551032836,
+      "precision": 0.9571067434921913,
+      "recall": 0.957,
+      "support": 2000.0
+    }
+  },
+  "confusion_matrix": {
+    "labels": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "matrix": [
+      [
+        883,
+        17,
+        0
+      ],
+      [
+        16,
+        653,
+        31
+      ],
+      [
+        0,
+        22,
+        378
+      ]
+    ]
+  },
+  "dataset_distribution": {
+    "synthetic_student_risk": 10000
+  },
+  "feature_importance": [
+    {
+      "feature": "engagement_score",
+      "importance": 0.581172
+    },
+    {
+      "feature": "recent_activity_count",
+      "importance": 0.119077
+    },
+    {
+      "feature": "weak_concepts_count",
+      "importance": 0.06845
+    },
+    {
+      "feature": "attendance_rate",
+      "importance": 0.056651
+    },
+    {
+      "feature": "correctness_rate",
+      "importance": 0.049668
+    },
+    {
+      "feature": "consistency_score",
+      "importance": 0.04711
+    },
+    {
+      "feature": "response_time",
+      "importance": 0.040619
+    },
+    {
+      "feature": "participation_rate",
+      "importance": 0.022253
+    },
+    {
+      "feature": "semantic_score",
+      "importance": 0.015
+    }
+  ],
+  "macro_f1": 0.951454,
+  "test_rows": 2000,
+  "train_rows": 8000,
+  "weighted_f1": 0.957019
+}

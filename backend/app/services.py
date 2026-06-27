@@ -1,9 +1,12 @@
 from datetime import datetime
+from typing import Any
 
+from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.database import MongoCollections
 from app.models import LiveSessionStats, utc_now
+from app.response_scoring import final_is_correct, final_response_label
 
 
 async def generate_unique_session_code(db: AsyncIOMotorDatabase, code_factory, attempts: int = 20) -> str:
@@ -29,16 +32,31 @@ async def get_live_session_stats(db: AsyncIOMotorDatabase, session_id: str) -> L
     answer_distribution: dict[str, dict[str, int]] = {}
     correct_counts: dict[str, int] = {}
     incorrect_counts: dict[str, int] = {}
+    semantic_counts: dict[str, dict[str, int]] = {}
     question_ids = session.get("question_ids", []) if session else []
     for response in responses:
         question_id = response["question_id"]
         answer = response["answer"]
         answer_distribution.setdefault(question_id, {})
         answer_distribution[question_id][answer] = answer_distribution[question_id].get(answer, 0) + 1
-        if response.get("is_correct") is True:
+        is_correct = final_is_correct(response)
+        semantic_label = final_response_label(response)
+        if is_correct is True:
             correct_counts[question_id] = correct_counts.get(question_id, 0) + 1
-        elif response.get("is_correct") is False:
+        if is_correct is False and semantic_label != "partial":
             incorrect_counts[question_id] = incorrect_counts.get(question_id, 0) + 1
+        if semantic_label in {"correct", "partial", "incorrect"}:
+            semantic_counts.setdefault(question_id, {"correct": 0, "partial": 0, "incorrect": 0, "pending": 0})
+            semantic_counts[question_id][semantic_label] += 1
+        elif is_correct is True:
+            semantic_counts.setdefault(question_id, {"correct": 0, "partial": 0, "incorrect": 0, "pending": 0})
+            semantic_counts[question_id]["correct"] += 1
+        elif is_correct is False:
+            semantic_counts.setdefault(question_id, {"correct": 0, "partial": 0, "incorrect": 0, "pending": 0})
+            semantic_counts[question_id]["incorrect"] += 1
+        else:
+            semantic_counts.setdefault(question_id, {"correct": 0, "partial": 0, "incorrect": 0, "pending": 0})
+            semantic_counts[question_id]["pending"] += 1
 
     presented_question_ids = set(question_ids) or {response["question_id"] for response in responses}
     submitted_pairs = {
@@ -54,6 +72,7 @@ async def get_live_session_stats(db: AsyncIOMotorDatabase, session_id: str) -> L
         answer_distribution=answer_distribution,
         correct_counts=correct_counts,
         incorrect_counts=incorrect_counts,
+        semantic_counts=semantic_counts,
         unanswered_count_placeholder=unanswered_count,
         updated_at=utc_now(),
     )
@@ -110,10 +129,22 @@ async def delete_session_cascade(
     }
 
 
+def serialize_mongo_value(value: Any) -> Any:
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, list):
+        return [serialize_mongo_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(serialize_mongo_value(item) for item in value)
+    if isinstance(value, dict):
+        return {key: serialize_mongo_value(item) for key, item in value.items()}
+    return value
+
+
 def serialize_document(document: dict) -> dict:
     clean = dict(document)
     clean.pop("_id", None)
-    return clean
+    return serialize_mongo_value(clean)
 
 
 def serialize_datetime(value: datetime) -> str:

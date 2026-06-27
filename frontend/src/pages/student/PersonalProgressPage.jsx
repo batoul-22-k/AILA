@@ -57,8 +57,7 @@ export function PersonalProgressPage() {
       <PageHeader
         eyebrow="Student analytics"
         title="Learning engagement overview"
-        description="Weekly attendance, participation, consistency, and engagement scores calculated from live classroom activity."
-        tone="role"
+                tone="role"
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

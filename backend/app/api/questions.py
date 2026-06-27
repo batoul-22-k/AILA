@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.auth import get_current_user, require_class_role
+from app.auth import get_current_user, require_account_class_role
 from app.database import MongoCollections, get_db
 from app.models import GeneratedQuestionOut, SaveGeneratedQuestionsRequest, new_id, utc_now
 
@@ -14,7 +14,7 @@ async def save_generated_questions(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> list[GeneratedQuestionOut]:
-    await require_class_role(db, user, payload.class_id, "instructor")
+    await require_account_class_role(db, user, payload.class_id, "instructor")
     # TODO: Replace this placeholder save flow with Ollama/LLaMA generated question review results.
     questions = [
         GeneratedQuestionOut(

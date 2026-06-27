@@ -22,9 +22,10 @@ export const instructorSnapshot = [
 ];
 
 export const studentRiskRoster = [
-  { name: "Nour Ahmad", className: "ML Lab", attendance: 62, engagement: 48, risk: "High", reason: "Missed two live sessions" },
-  { name: "Omar Saleh", className: "Data 310", attendance: 74, engagement: 56, risk: "Medium", reason: "Low response confidence" },
-  { name: "Lina Farah", className: "AI 201", attendance: 89, engagement: 72, risk: "Low", reason: "Recovered after intervention" },
+  { name: "Nour Ahmad", className: "ML Lab", attendance: 33, participation: 42, correctness: 50, engagement: 42, riskScore: 58, risk: "Medium", reason: "Low attendance", lastActive: "Jun 4" },
+  { name: "Omar Saleh", className: "Data 310", attendance: 65, participation: 92, correctness: 35, engagement: 69, riskScore: 31, risk: "Medium", reason: "Weak correctness", lastActive: "Jun 12" },
+  { name: "Lina Farah", className: "AI 201", attendance: 92, participation: 88, correctness: 84, engagement: 88, riskScore: 12, risk: "Low", reason: "Strong overall performance", lastActive: "Jun 13" },
+  { name: "Karim Haddad", className: "ML Lab", attendance: 0, participation: 0, correctness: 0, engagement: 0, riskScore: 100, risk: "Critical", reason: "Low attendance", lastActive: "No activity" },
 ];
 
 export const activityLogs = [
@@ -55,9 +56,9 @@ export const classComparison = [
 ];
 
 export const riskReports = [
-  { title: "ML Lab participation drop", level: "High", detail: "Response rate decreased 18% over two weeks." },
-  { title: "Data 310 quiz gaps", level: "Medium", detail: "Students missed core classification concepts." },
-  { title: "AI 201 stable growth", level: "Low", detail: "Engagement and completion remain above target." },
+  { title: "ML Lab attendance concern", level: "Critical", detail: "One student has no attended sessions and no answered questions." },
+  { title: "Data 310 correctness gap", level: "Medium", detail: "High participation is offset by weaker answer correctness." },
+  { title: "AI 201 stable growth", level: "Low", detail: "Attendance, participation, and correctness remain healthy." },
 ];
 
 export const heatmapRows = [

@@ -8,8 +8,10 @@ import {
   Gauge,
   GraduationCap,
   LineChart,
+  Medal,
   Radio,
   ShieldCheck,
+  Trophy,
   Users,
 } from "lucide-react";
 
@@ -135,7 +137,7 @@ export const roleMeta = {
   admin: {
     label: "Administrator",
     name: "Administrator",
-    workspace: "Executive Console",
+    workspace: "Institution Command Center",
     palette: rolePalettes.admin,
     tone: "orange",
     focus: "Institution health, risk, and reports",
@@ -148,6 +150,8 @@ export const navigation = {
     { to: "/student", label: "Dashboard", icon: Gauge, end: true },
     { to: "/student/join", label: "Join Session", icon: Radio },
     { to: "/student/session", label: "Live Class", icon: BrainCircuit },
+    { to: "/student/achievements", label: "Achievements", icon: Trophy },
+    { to: "/student/leaderboard", label: "Leaderboard", icon: Medal },
     { to: "/student/progress", label: "Analytics", icon: BarChart3 },
   ],
   instructor: [
@@ -162,8 +166,17 @@ export const navigation = {
     { to: "/admin", label: "Dashboard", icon: Gauge, end: true },
     { to: "/admin/accounts", label: "Accounts", icon: Users },
     { to: "/admin/classes", label: "Classes", icon: Building2 },
-    { to: "/admin/instructors", label: "Instructors", icon: Users },
     { to: "/admin/students", label: "Students", icon: Activity },
-    { to: "/admin/reports", label: "Reports", icon: FileText },
+    {
+      to: "/admin/insights/analytics",
+      label: "Educational Intelligence",
+      icon: BrainCircuit,
+      matchPrefix: "/admin/insights",
+      children: [
+        { to: "/admin/insights/analytics", label: "Analytics", icon: BarChart3, end: true },
+        { to: "/admin/insights/predictions", label: "Predictions", icon: FileText, end: true },
+        { to: "/admin/insights/reports", label: "Reports", icon: LineChart, end: true },
+      ],
+    },
   ],
 };

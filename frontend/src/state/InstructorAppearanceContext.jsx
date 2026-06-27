@@ -57,19 +57,6 @@ export const appPalettes = {
       border: "#DDE5E3",
     },
   },
-  "dark-academic": {
-    name: "Dark Academic",
-    feeling: "Premium night mode, elegant, focused.",
-    colors: {
-      bg: "#0F172A",
-      surface: "#1E293B",
-      primary: "#CBD5E1",
-      accent: "#D4A373",
-      success: "#84A98C",
-      text: "#F8FAFC",
-      border: "#334155",
-    },
-  },
 };
 
 export const densityOptions = {
@@ -112,7 +99,7 @@ function getStoredAppearance() {
   try {
     const stored = window.localStorage.getItem(appStorageKey) || window.localStorage.getItem(storageKey) || "{}";
     const parsed = JSON.parse(stored);
-    if (!parsed.palette || parsed.palette === "academic-classic") parsed.palette = defaults.palette;
+    if (!parsed.palette || parsed.palette === "academic-classic" || !appPalettes[parsed.palette]) parsed.palette = defaults.palette;
     return { ...defaults, ...parsed };
   } catch {
     return defaults;

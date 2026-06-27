@@ -458,6 +458,26 @@ def misconception_options(concept: str) -> list[str]:
     ]
 
 
+def shuffled_mcq_options(options: list[str], correct_answer: str) -> list[str]:
+    normalized_correct = str(correct_answer or "").strip()
+    clean_options: list[str] = []
+    for option in options:
+        clean_option = str(option or "").strip()
+        if clean_option and clean_option.lower() not in {existing.lower() for existing in clean_options}:
+            clean_options.append(clean_option)
+    if normalized_correct and normalized_correct.lower() not in {option.lower() for option in clean_options}:
+        clean_options.insert(0, normalized_correct)
+    if normalized_correct:
+        protected = [option for option in clean_options if option.lower() == normalized_correct.lower()]
+        remaining = [option for option in clean_options if option.lower() != normalized_correct.lower()]
+        clean_options = [*protected[:1], *remaining[:3]]
+    else:
+        clean_options = clean_options[:4]
+    shuffled = clean_options[:]
+    random.shuffle(shuffled)
+    return shuffled
+
+
 def local_clean_question_from_lecture(
     text: str,
     question_type: str | None,
@@ -489,7 +509,7 @@ def local_clean_question_from_lecture(
 
     correct_option = concise_option(correct, f"{concept} describes the main idea")
     distractors = [concise_option(option, option) for option in misconception_options(concept)]
-    options = [correct_option, *distractors[:3]]
+    options = shuffled_mcq_options([correct_option, *distractors[:3]], correct_option)
     return {
         "type": "mcq",
         "question_text": truncate_words(f"Which statement correctly describes {concept}?", QUESTION_TEXT_MAX_WORDS),
@@ -566,8 +586,8 @@ def enforce_question_quality(
                 deduped.append(option)
             if len(deduped) == 4:
                 break
-        repaired["options"] = deduped
-        repaired["correct_answer"] = deduped[0] if deduped else fallback["correct_answer"]
+        repaired["correct_answer"] = correct if correct in deduped else fallback["correct_answer"]
+        repaired["options"] = shuffled_mcq_options(deduped, repaired["correct_answer"])
         if len(repaired["options"]) < 4:
             repaired = fallback
     else:
@@ -876,7 +896,8 @@ def repair_question_dict(
         fallback_options = fallback["options"]
         repaired["options"] = (options + fallback_options)[:4]
         if repaired["correct_answer"] not in repaired["options"]:
-            repaired["correct_answer"] = repaired["options"][0]
+            repaired["correct_answer"] = fallback["correct_answer"]
+        repaired["options"] = shuffled_mcq_options(repaired["options"], repaired["correct_answer"])
     else:
         repaired["options"] = []
         repaired["correct_answer"] = concise_short_answer(repaired.get("correct_answer") or fallback["correct_answer"])
@@ -969,7 +990,7 @@ def call_ollama_for_questions(
 ) -> list[InstructorQuestion]:
     settings = get_settings()
     options = {
-        "temperature": 0.2,
+        "temperature": 1,
         "num_ctx": settings.ollama_num_ctx,
         "num_predict": settings.ollama_num_predict,
         "num_gpu": settings.ollama_num_gpu,
@@ -1090,6 +1111,8 @@ def normalize_question(raw: dict) -> InstructorQuestion:
     if question_type == "short_answer":
         options = []
         correct_answer = concise_short_answer(correct_answer)
+    else:
+        options = shuffled_mcq_options(options, correct_answer)
 
     return InstructorQuestion(
         question_id=raw.get("question_id") or new_id("question"),

@@ -37,7 +37,7 @@ export function JoinSessionPage() {
 
   return (
     <div className="page-grid">
-      <PageHeader eyebrow="Live class" title="Enter session code" description="Join the active session shared by your instructor." tone="role" />
+      <PageHeader eyebrow="Live class" title="Enter session code" description="Join the running session shared by your instructor." tone="role" />
       <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
         <DashboardCard>
           <div className="flex items-center gap-3">
@@ -46,7 +46,7 @@ export function JoinSessionPage() {
             </span>
             <div>
               <h2 className="text-lg font-black text-slate-950 dark:text-white">Session access</h2>
-              <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">Use the code shared by your instructor to enter the active class session.</p>
+              <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">Use the code shared by your instructor to enter the live class session.</p>
             </div>
           </div>
           <div className="mt-6 flex items-center gap-3 rounded-lg bg-role-hover p-4 text-sm font-bold text-slate-600 dark:bg-slate-950 dark:text-slate-300">

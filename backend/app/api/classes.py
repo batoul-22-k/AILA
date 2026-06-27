@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.auth import account_role_for_user, get_current_user, require_class_role
+from app.auth import account_role_for_user, get_current_user, require_admin, require_class_role
 from app.database import MongoCollections, get_db
 from app.models import ClassCreate, ClassOut, ClassStatusUpdate, ClassStudentOut, EnrollStudentRequest, new_id, utc_now
 from app.services import serialize_document
@@ -20,10 +20,28 @@ def class_out_from_row(row: dict) -> ClassOut:
     return ClassOut(**clean)
 
 
-async def require_class_manager(db: AsyncIOMotorDatabase, user: dict, class_id: str) -> None:
-    if account_role_for_user(user) == "admin":
-        return
-    await require_class_role(db, user, class_id, "instructor")
+async def upsert_instructor_memberships(db: AsyncIOMotorDatabase, class_id: str, instructor_ids: list[str]) -> None:
+    now = utc_now()
+    for instructor_id in instructor_ids:
+        await db[MongoCollections.class_memberships].update_one(
+            {"class_id": class_id, "user_id": instructor_id, "role": "instructor"},
+            {
+                "$set": {
+                    "status": "active",
+                    "role_in_class": "instructor",
+                    "source": "admin",
+                    "updated_at": now,
+                },
+                "$setOnInsert": {
+                    "membership_id": new_id("membership"),
+                    "class_id": class_id,
+                    "user_id": instructor_id,
+                    "role": "instructor",
+                    "created_at": now,
+                },
+            },
+            upsert=True,
+        )
 
 
 @router.get("", response_model=list[ClassOut])
@@ -54,38 +72,26 @@ async def create_class(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> ClassOut:
-    requested_instructor_ids = payload.instructor_ids or ([payload.instructor_id] if payload.instructor_id else [user["user_id"]])
-    if account_role_for_user(user) != "admin":
-        if user["user_id"] not in requested_instructor_ids:
-            requested_instructor_ids = [user["user_id"]]
+    await require_admin(db, user)
+    requested_instructor_ids = payload.instructor_ids or ([payload.instructor_id] if payload.instructor_id else [])
 
     class_doc = ClassOut(
         class_id=new_id("class"),
         name=payload.name,
         description=payload.description,
         semester=payload.semester,
+        course_code=payload.course_code,
+        section=payload.section,
+        department=payload.department,
+        year=payload.year,
+        institution_class_id=payload.institution_class_id,
         created_by=user["user_id"],
         instructor_ids=requested_instructor_ids,
         status="active",
         created_at=utc_now(),
     )
     await db[MongoCollections.classes].insert_one(class_doc.model_dump())
-    for instructor_id in requested_instructor_ids:
-        if instructor_id == user["user_id"] or account_role_for_user(user) == "admin":
-            await db[MongoCollections.class_memberships].update_one(
-                {"class_id": class_doc.class_id, "user_id": instructor_id, "role": "instructor"},
-                {
-                    "$set": {"status": "active"},
-                    "$setOnInsert": {
-                        "membership_id": new_id("membership"),
-                        "class_id": class_doc.class_id,
-                        "user_id": instructor_id,
-                        "role": "instructor",
-                        "created_at": utc_now(),
-                    },
-                },
-                upsert=True,
-            )
+    await upsert_instructor_memberships(db, class_doc.class_id, requested_instructor_ids)
     return class_doc
 
 
@@ -96,7 +102,7 @@ async def update_class(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> ClassOut:
-    await require_class_manager(db, user, class_id)
+    await require_admin(db, user)
     existing = await db[MongoCollections.classes].find_one({"class_id": class_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Class not found")
@@ -105,9 +111,19 @@ async def update_class(
         "name": payload.name,
         "description": payload.description,
         "semester": payload.semester,
+        "course_code": payload.course_code,
+        "section": payload.section,
+        "department": payload.department,
+        "year": payload.year,
+        "institution_class_id": payload.institution_class_id,
         "updated_at": utc_now(),
     }
+    requested_instructor_ids = payload.instructor_ids or ([payload.instructor_id] if payload.instructor_id else [])
+    if requested_instructor_ids:
+        update["instructor_ids"] = requested_instructor_ids
     await db[MongoCollections.classes].update_one({"class_id": class_id}, {"$set": update})
+    if requested_instructor_ids:
+        await upsert_instructor_memberships(db, class_id, requested_instructor_ids)
     refreshed = await db[MongoCollections.classes].find_one({"class_id": class_id})
     return class_out_from_row(refreshed)
 
@@ -119,15 +135,16 @@ async def update_class_status(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> ClassOut:
-    await require_class_manager(db, user, class_id)
+    await require_admin(db, user)
     existing = await db[MongoCollections.classes].find_one({"class_id": class_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Class not found")
+    next_status = payload.status.lower()
     await db[MongoCollections.classes].update_one(
         {"class_id": class_id},
-        {"$set": {"status": payload.status, "updated_at": utc_now()}},
+        {"$set": {"status": next_status, "updated_at": utc_now()}},
     )
-    if payload.status == "inactive":
+    if next_status == "inactive":
         await db[MongoCollections.sessions].update_many(
             {"class_id": class_id, "status": "active"},
             {"$set": {"status": "closed", "updated_at": utc_now()}},
@@ -142,7 +159,7 @@ async def delete_class(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> dict:
-    await require_class_manager(db, user, class_id)
+    await require_admin(db, user)
     existing = await db[MongoCollections.classes].find_one({"class_id": class_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Class not found")
@@ -169,7 +186,7 @@ async def list_class_students(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> list[ClassStudentOut]:
-    await require_class_manager(db, user, class_id)
+    await require_class_role(db, user, class_id, "instructor")
     memberships = await db[MongoCollections.class_memberships].find(
         {"class_id": class_id, "role": "student", "status": "active"}
     ).sort("created_at", -1).to_list(length=500)
@@ -204,7 +221,7 @@ async def enroll_class_student(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> ClassStudentOut:
-    await require_class_manager(db, user, class_id)
+    await require_admin(db, user)
     class_doc = await db[MongoCollections.classes].find_one({"class_id": class_id})
     if not class_doc:
         raise HTTPException(status_code=404, detail="Class not found")
@@ -223,7 +240,12 @@ async def enroll_class_student(
     await db[MongoCollections.class_memberships].update_one(
         {"class_id": class_id, "user_id": payload.user_id, "role": "student"},
         {
-            "$set": {"status": "active"},
+            "$set": {
+                "status": "active",
+                "role_in_class": "student",
+                "source": "admin",
+                "updated_at": now,
+            },
             "$setOnInsert": {
                 "membership_id": membership_id,
                 "class_id": class_id,
@@ -266,7 +288,7 @@ async def remove_class_student(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user: dict = Depends(get_current_user),
 ) -> dict:
-    await require_class_manager(db, user, class_id)
+    await require_admin(db, user)
     result = await db[MongoCollections.class_memberships].update_one(
         {"class_id": class_id, "user_id": student_id, "role": "student"},
         {"$set": {"status": "inactive", "updated_at": utc_now()}},

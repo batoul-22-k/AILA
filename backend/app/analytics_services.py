@@ -1,10 +1,11 @@
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.database import MongoCollections
 from app.models import new_id, utc_now
+from app.response_scoring import final_is_correct, final_response_score
 from app.services import serialize_document
 
 
@@ -14,8 +15,51 @@ def percentage(numerator: int, denominator: int) -> float:
     return round((numerator / denominator) * 100, 2)
 
 
-def engagement_score(attendance_rate: float, participation_rate: float, consistency_rate: float) -> float:
-    return round((0.4 * attendance_rate) + (0.4 * participation_rate) + (0.2 * consistency_rate), 2)
+def calculate_engagement_score(
+    attendance_rate: float,
+    participation_rate: float,
+    correctness_rate: float,
+    consistency_rate: float,
+    recent_activity_score: float,
+) -> float:
+    return round(
+        (0.35 * attendance_rate)
+        + (0.25 * participation_rate)
+        + (0.25 * correctness_rate)
+        + (0.10 * consistency_rate)
+        + (0.05 * recent_activity_score),
+        2,
+    )
+
+
+def calculate_risk_score(learning_health_score: float) -> float:
+    return round(max(0.0, min(100.0, 100.0 - learning_health_score)), 2)
+
+
+def get_risk_level(risk_score: float) -> str:
+    if risk_score <= 30:
+        return "Low"
+    if risk_score <= 60:
+        return "Medium"
+    if risk_score <= 80:
+        return "High"
+    return "Critical"
+
+
+def recent_activity_score(last_active_at: datetime | None, reference_time: datetime | None = None) -> float:
+    if not last_active_at:
+        return 0.0
+    current_time = reference_time or utc_now()
+    if last_active_at.tzinfo is None:
+        last_active_at = last_active_at.replace(tzinfo=timezone.utc)
+    age = current_time - last_active_at.astimezone(timezone.utc)
+    if age <= timedelta(days=7):
+        return 100.0
+    if age <= timedelta(days=14):
+        return 70.0
+    if age <= timedelta(days=30):
+        return 40.0
+    return 0.0
 
 
 def session_datetime(session: dict) -> datetime:
@@ -49,21 +93,33 @@ def average(values: list[float]) -> float:
 
 
 def risk_level_for(attendance_rate: float, participation_rate: float, engagement_score_value: float) -> str:
-    if attendance_rate < 50 or engagement_score_value < 40:
-        return "High"
-    if 40 <= engagement_score_value <= 70:
-        return "Medium"
-    return "Low"
+    return get_risk_level(calculate_risk_score(engagement_score_value))
 
 
-def risk_reason_for(attendance_rate: float, participation_rate: float, engagement_score_value: float) -> str:
+def risk_reason_for(
+    attendance_rate: float,
+    participation_rate: float,
+    engagement_score_value: float,
+    correctness_rate: float = 100.0,
+    consistency_rate: float = 100.0,
+    recent_activity_value: float = 100.0,
+    previous_engagement_score: float | None = None,
+) -> str:
+    if engagement_score_value >= 70:
+        return "Strong overall performance"
+    if previous_engagement_score is not None and engagement_score_value <= previous_engagement_score - 10:
+        return "Declining engagement"
     if attendance_rate < 50:
         return "Low attendance"
-    if engagement_score_value < 40:
-        return "Low engagement score"
-    if engagement_score_value <= 70:
-        return "Engagement below target"
-    return "On track"
+    if correctness_rate < 60:
+        return "Weak correctness"
+    if recent_activity_value < 50:
+        return "Inactive recently"
+    if consistency_rate < 60:
+        return "Low response consistency"
+    if participation_rate < 60:
+        return "Low participation"
+    return "Engagement below target"
 
 
 def value_average(values: list[float]) -> float:
@@ -98,7 +154,7 @@ async def generate_risk_alerts(db: AsyncIOMotorDatabase, class_id: str, analytic
         if not current or doc["week"] >= current["week"]:
             latest_by_student[doc["student_id"]] = doc
 
-    risky_docs = [doc for doc in latest_by_student.values() if doc["risk_level"] in {"High", "Medium"}]
+    risky_docs = [doc for doc in latest_by_student.values() if doc["risk_level"] in {"Critical", "High", "Medium"}]
     if not risky_docs:
         return
 
@@ -160,7 +216,7 @@ async def recalculate_class_analytics(db: AsyncIOMotorDatabase, class_id: str) -
     session_ids = list(sessions_by_id)
     participation_records = await db[MongoCollections.participation_records].find(
         {"session_id": {"$in": session_ids}, "student_id": {"$in": students}},
-        {"session_id": 1, "student_id": 1},
+        {"session_id": 1, "student_id": 1, "joined_at": 1, "last_seen_at": 1},
     ).to_list(length=None)
     responses = await db[MongoCollections.responses].find(
         {"session_id": {"$in": session_ids}, "student_id": {"$in": students}},
@@ -168,19 +224,33 @@ async def recalculate_class_analytics(db: AsyncIOMotorDatabase, class_id: str) -
             "session_id": 1,
             "question_id": 1,
             "student_id": 1,
+            "is_correct": 1,
             "response_time_seconds": 1,
             "response_time_placeholder": 1,
             "semantic_score": 1,
+            "final_score": 1,
+            "aiEvaluation": 1,
+            "instructorReview": 1,
+            "submitted_at": 1,
         },
     ).to_list(length=None)
 
     attended_sessions_by_student: dict[str, set[str]] = defaultdict(set)
+    last_activity_by_student_week: dict[tuple[str, str], datetime] = {}
     for record in participation_records:
         if record.get("session_id") in sessions_by_id and record.get("student_id") in students:
             attended_sessions_by_student[record["student_id"]].add(record["session_id"])
+            current_week = session_week(sessions_by_id[record["session_id"]])
+            activity_at = record.get("last_seen_at") or record.get("joined_at")
+            if isinstance(activity_at, datetime):
+                key = (record["student_id"], current_week)
+                if key not in last_activity_by_student_week or activity_at > last_activity_by_student_week[key]:
+                    last_activity_by_student_week[key] = activity_at
 
     answered_questions_by_student: dict[str, set[tuple[str, str]]] = defaultdict(set)
     answered_sessions_by_student: dict[str, set[str]] = defaultdict(set)
+    correct_answers_by_student_week: dict[tuple[str, str], int] = defaultdict(int)
+    answered_answers_by_student_week: dict[tuple[str, str], int] = defaultdict(int)
     response_times_by_student_week: dict[tuple[str, str], list[float]] = defaultdict(list)
     semantic_scores_by_student_week: dict[tuple[str, str], list[float]] = defaultdict(list)
     for response in responses:
@@ -189,13 +259,23 @@ async def recalculate_class_analytics(db: AsyncIOMotorDatabase, class_id: str) -
         question_id = response.get("question_id")
         if session_id in sessions_by_id and student_id in students and question_id:
             current_week = session_week(sessions_by_id[session_id])
+            attended_sessions_by_student[student_id].add(session_id)
             answered_questions_by_student[student_id].add((session_id, question_id))
             answered_sessions_by_student[student_id].add(session_id)
+            answered_answers_by_student_week[(student_id, current_week)] += 1
+            if final_is_correct(response) is True:
+                correct_answers_by_student_week[(student_id, current_week)] += 1
             response_time = response.get("response_time_seconds", response.get("response_time_placeholder"))
             if response_time is not None:
                 response_times_by_student_week[(student_id, current_week)].append(float(response_time))
-            if response.get("semantic_score") is not None:
-                semantic_scores_by_student_week[(student_id, current_week)].append(float(response["semantic_score"]))
+            semantic_score = final_response_score(response)
+            if semantic_score is not None:
+                semantic_scores_by_student_week[(student_id, current_week)].append(float(semantic_score))
+            submitted_at = response.get("submitted_at")
+            if isinstance(submitted_at, datetime):
+                key = (student_id, current_week)
+                if key not in last_activity_by_student_week or submitted_at > last_activity_by_student_week[key]:
+                    last_activity_by_student_week[key] = submitted_at
 
     analytics_docs: list[dict] = []
     for week, week_sessions in sorted(sessions_by_week.items()):
@@ -211,12 +291,23 @@ async def recalculate_class_analytics(db: AsyncIOMotorDatabase, class_id: str) -
                 if key[0] in week_session_ids
             }
             answered_session_ids = answered_sessions_by_student.get(student_id, set()) & week_session_ids
+            attended_question_count = sum(
+                len(sessions_by_id[session_id].get("question_ids") or [])
+                for session_id in attended_session_ids
+                if session_id in sessions_by_id
+            )
 
             attendance_rate = percentage(len(attended_session_ids), total_week_sessions)
-            participation_rate = percentage(len(answered_question_keys), total_week_questions)
+            participation_rate = percentage(len(answered_question_keys), attended_question_count)
+            correctness_rate = percentage(
+                correct_answers_by_student_week.get((student_id, week), 0),
+                answered_answers_by_student_week.get((student_id, week), 0),
+            )
             consistency_rate = percentage(len(answered_session_ids), len(attended_session_ids))
-            score = engagement_score(attendance_rate, participation_rate, consistency_rate)
-            risk_level = risk_level_for(attendance_rate, participation_rate, score)
+            recent_activity = recent_activity_score(last_activity_by_student_week.get((student_id, week)), calculated_at)
+            score = calculate_engagement_score(attendance_rate, participation_rate, correctness_rate, consistency_rate, recent_activity)
+            risk_score = calculate_risk_score(score)
+            risk_level = get_risk_level(risk_score)
 
             analytics_docs.append(
                 {
@@ -227,16 +318,26 @@ async def recalculate_class_analytics(db: AsyncIOMotorDatabase, class_id: str) -
                     "sessions_attended": len(attended_session_ids),
                     "total_sessions": total_week_sessions,
                     "attendance_rate": attendance_rate,
-                    "questions_presented": total_week_questions,
+                    "questions_presented": attended_question_count,
                     "questions_answered": len(answered_question_keys),
                     "participation_rate": participation_rate,
+                    "correctness_rate": correctness_rate,
                     "consistency_rate": consistency_rate,
                     "sessions_with_answers": len(answered_session_ids),
                     "average_response_time": value_average(response_times_by_student_week.get((student_id, week), [])),
                     "average_semantic_score": value_average(semantic_scores_by_student_week.get((student_id, week), [])),
+                    "recent_activity_score": recent_activity,
                     "engagement_score": score,
+                    "risk_score": risk_score,
                     "risk_level": risk_level,
-                    "risk_reason": risk_reason_for(attendance_rate, participation_rate, score),
+                    "risk_reason": risk_reason_for(
+                        attendance_rate,
+                        participation_rate,
+                        score,
+                        correctness_rate,
+                        consistency_rate,
+                        recent_activity,
+                    ),
                     "calculated_at": calculated_at,
                 }
             )
@@ -349,7 +450,7 @@ async def get_class_analytics_summary(db: AsyncIOMotorDatabase, class_id: str) -
                 "average_consistency_rate": average([row.get("consistency_rate", 0.0) for row in week_rows]),
                 "average_response_time": average([row.get("average_response_time", 0.0) for row in week_rows]),
                 "average_engagement_score": average([row.get("engagement_score", 0.0) for row in week_rows]),
-                "at_risk_students": len({row["student_id"] for row in week_rows if row.get("risk_level") in {"High", "Medium"}}),
+                "at_risk_students": len({row["student_id"] for row in week_rows if row.get("risk_level") in {"Critical", "High", "Medium"}}),
                 "active_students": len(
                     {
                         row["student_id"]
@@ -369,7 +470,7 @@ async def get_class_analytics_summary(db: AsyncIOMotorDatabase, class_id: str) -
             if row.get("attendance_rate", 0) > 0 or row.get("participation_rate", 0) > 0
         }
     )
-    at_risk_students = len({row["student_id"] for row in latest_rows if row.get("risk_level") in {"High", "Medium"}})
+    at_risk_students = len({row["student_id"] for row in latest_rows if row.get("risk_level") in {"Critical", "High", "Medium"}})
 
     # TODO: Add model-backed prediction summaries here after the XGBoost service is trained.
     return {
@@ -424,29 +525,54 @@ async def get_at_risk_students(db: AsyncIOMotorDatabase, class_id: str | None = 
     session_ids = list(sessions_by_id)
     participation_records = await db[MongoCollections.participation_records].find(
         {"session_id": {"$in": session_ids}, "student_id": {"$in": student_ids}},
-        {"session_id": 1, "student_id": 1},
+        {"session_id": 1, "student_id": 1, "joined_at": 1, "last_seen_at": 1},
     ).to_list(length=None)
     responses = await db[MongoCollections.responses].find(
         {"session_id": {"$in": session_ids}, "student_id": {"$in": student_ids}},
-        {"session_id": 1, "student_id": 1, "question_id": 1},
+        {
+            "session_id": 1,
+            "student_id": 1,
+            "question_id": 1,
+            "is_correct": 1,
+            "submitted_at": 1,
+            "semantic_score": 1,
+            "final_score": 1,
+            "aiEvaluation": 1,
+            "instructorReview": 1,
+            "semantic_label": 1,
+        },
     ).to_list(length=None)
 
     attended_by_pair: dict[tuple[str, str], set[str]] = defaultdict(set)
+    last_active_by_pair: dict[tuple[str, str], datetime] = {}
     for record in participation_records:
         session = sessions_by_id.get(record.get("session_id"))
         if session:
-            attended_by_pair[(session["class_id"], record["student_id"])].add(record["session_id"])
+            pair = (session["class_id"], record["student_id"])
+            attended_by_pair[pair].add(record["session_id"])
+            activity_at = record.get("last_seen_at") or record.get("joined_at")
+            if isinstance(activity_at, datetime) and (pair not in last_active_by_pair or activity_at > last_active_by_pair[pair]):
+                last_active_by_pair[pair] = activity_at
 
     answered_by_pair: dict[tuple[str, str], set[tuple[str, str]]] = defaultdict(set)
     answered_sessions_by_pair: dict[tuple[str, str], set[str]] = defaultdict(set)
+    answered_responses_by_pair: dict[tuple[str, str], int] = defaultdict(int)
+    correct_responses_by_pair: dict[tuple[str, str], int] = defaultdict(int)
     for response in responses:
         session = sessions_by_id.get(response.get("session_id"))
         question_id = response.get("question_id")
         student_id = response.get("student_id")
         if session and question_id and student_id:
             pair = (session["class_id"], student_id)
+            attended_by_pair[pair].add(session["session_id"])
             answered_by_pair[pair].add((session["session_id"], question_id))
             answered_sessions_by_pair[pair].add(session["session_id"])
+            answered_responses_by_pair[pair] += 1
+            if final_is_correct(response) is True:
+                correct_responses_by_pair[pair] += 1
+            submitted_at = response.get("submitted_at")
+            if isinstance(submitted_at, datetime) and (pair not in last_active_by_pair or submitted_at > last_active_by_pair[pair]):
+                last_active_by_pair[pair] = submitted_at
 
     results: list[dict] = []
     for membership in memberships:
@@ -458,20 +584,28 @@ async def get_at_risk_students(db: AsyncIOMotorDatabase, class_id: str | None = 
         student_id = membership["user_id"]
         pair = (current_class_id, student_id)
         history = analytics_by_pair.get(pair, [])
-        latest = history[-1] if history else {
-            "week": None,
-            "attendance_rate": 0.0,
-            "participation_rate": 0.0,
-            "consistency_rate": 0.0,
-            "engagement_score": 0.0,
-        }
-        attendance_rate = latest.get("attendance_rate", 0.0)
-        participation_rate = latest.get("participation_rate", 0.0)
-        engagement = latest.get("engagement_score", 0.0)
-        risk_level = risk_level_for(attendance_rate, participation_rate, engagement)
+        latest = history[-1] if history else {}
+        attended_session_ids = attended_by_pair.get(pair, set())
+        answered_question_keys = answered_by_pair.get(pair, set())
+        answered_session_ids = answered_sessions_by_pair.get(pair, set())
+        attended_question_count = sum(
+            len(sessions_by_id[session_id].get("question_ids") or [])
+            for session_id in attended_session_ids
+            if session_id in sessions_by_id
+        )
+        attendance_rate = percentage(len(attended_session_ids), len(class_sessions))
+        participation_rate = percentage(len(answered_question_keys), attended_question_count)
+        correctness_rate = percentage(correct_responses_by_pair.get(pair, 0), answered_responses_by_pair.get(pair, 0))
+        consistency_rate = percentage(len(answered_session_ids), len(attended_session_ids))
+        last_active_at = last_active_by_pair.get(pair)
+        recent_activity = recent_activity_score(last_active_at)
+        engagement = calculate_engagement_score(attendance_rate, participation_rate, correctness_rate, consistency_rate, recent_activity)
+        risk_score = calculate_risk_score(engagement)
+        risk_level = get_risk_level(risk_score)
         if not include_all and risk_level == "Low":
             continue
 
+        previous_engagement = history[-2].get("engagement_score") if len(history) > 1 else None
         user = users_by_id.get(student_id, {})
         class_doc = classes_by_id.get(current_class_id, {})
         results.append(
@@ -481,18 +615,31 @@ async def get_at_risk_students(db: AsyncIOMotorDatabase, class_id: str | None = 
                 "email": user.get("email"),
                 "class_id": current_class_id,
                 "class_name": class_doc.get("name") or current_class_id,
-                "week": latest.get("week"),
+                "week": latest.get("week") or (session_week(class_sessions[-1]) if class_sessions else None),
                 "attendance_rate": attendance_rate,
                 "participation_rate": participation_rate,
-                "consistency_rate": latest.get("consistency_rate", 0.0),
+                "correctness_rate": correctness_rate,
+                "consistency_rate": consistency_rate,
+                "recent_activity_score": recent_activity,
                 "engagement_score": engagement,
+                "learning_health_score": engagement,
+                "risk_score": risk_score,
                 "risk_level": risk_level,
-                "risk_reason": risk_reason_for(attendance_rate, participation_rate, engagement),
-                "sessions_attended": len(attended_by_pair.get(pair, set())),
+                "risk_reason": risk_reason_for(
+                    attendance_rate,
+                    participation_rate,
+                    engagement,
+                    correctness_rate,
+                    consistency_rate,
+                    recent_activity,
+                    previous_engagement,
+                ),
+                "last_active_at": last_active_at,
+                "sessions_attended": len(attended_session_ids),
                 "total_sessions": len(class_sessions),
-                "questions_answered": len(answered_by_pair.get(pair, set())),
-                "questions_presented": sum(len(session.get("question_ids") or []) for session in class_sessions),
-                "sessions_with_answers": len(answered_sessions_by_pair.get(pair, set())),
+                "questions_answered": len(answered_question_keys),
+                "questions_presented": attended_question_count,
+                "sessions_with_answers": len(answered_session_ids),
                 "weekly_history": history,
             }
         )
@@ -500,8 +647,7 @@ async def get_at_risk_students(db: AsyncIOMotorDatabase, class_id: str | None = 
     return sorted(
         results,
         key=lambda row: (
-            {"High": 0, "Medium": 1, "Low": 2}.get(row["risk_level"], 3),
-            row["engagement_score"],
+            -row["risk_score"],
             row["student_name"].lower(),
         ),
     )

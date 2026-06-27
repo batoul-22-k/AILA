@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import ai, analytics, auth, classes, dashboards, instructor, lecture_uploads, notifications, progress, questions, responses, sessions, users
+from app.api import admin, ai, analytics, auth, classes, dashboards, gamification, instructor, lecture_uploads, notifications, predictions, progress, questions, responses, sessions, users
 from app.config import get_settings
 from app.database import close_mongo_connection, connect_to_mongo
 
@@ -32,6 +32,7 @@ app.add_middleware(
 )
 
 app.include_router(users.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
 app.include_router(instructor.router, prefix="/api")
@@ -41,6 +42,8 @@ app.include_router(classes.router, prefix="/api")
 app.include_router(lecture_uploads.router, prefix="/api")
 app.include_router(notifications.router, prefix="/api")
 app.include_router(progress.router, prefix="/api")
+app.include_router(gamification.router, prefix="/api")
+app.include_router(predictions.router, prefix="/api")
 app.include_router(questions.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
 app.include_router(responses.router, prefix="/api")

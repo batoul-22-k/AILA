@@ -2,7 +2,7 @@ import { Bell, BookOpen, CheckCheck, ChevronDown, LogOut, Menu, Search, Settings
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { listNotifications, markNotificationsRead } from "../api/client";
+import { getGamificationProfile, listNotifications, markNotificationsRead } from "../api/client";
 import { roleMeta } from "../navigation";
 import { useAuth } from "../state/AuthContext";
 import { useCurrentWorkspace } from "../state/WorkspaceContext";
@@ -10,7 +10,6 @@ import { cn } from "../utils/cn";
 import { AilaIcon } from "./AilaLogo";
 import { Badge } from "./Badge";
 import { Button } from "./Button";
-import { ThemeToggle } from "./ThemeToggle";
 
 function formatNotificationTime(value) {
   if (!value) return "";
@@ -28,6 +27,7 @@ export function Topbar({ role, onMenuClick }) {
   const [accountOpen, setAccountOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [studentProfile, setStudentProfile] = useState(null);
   const accountMenuRef = useRef(null);
   const notificationsRef = useRef(null);
   const { logout, user, workspaces } = useAuth();
@@ -40,6 +40,8 @@ export function Topbar({ role, onMenuClick }) {
   const studentClasses = workspaces.filter((workspace) => workspace.type === "student");
   const displayName = user?.name ?? meta.name;
   const displayEmail = user?.email ?? "";
+  const studentProgressLabel = studentProfile ? `Level ${studentProfile.level || 1} Scholar` : meta.label;
+  const studentStarsLabel = studentProfile ? `${Number(studentProfile.stars || 0).toLocaleString()} Stars` : "";
   const unreadCount = notifications.filter((notification) => !notification.read).length;
 
   useEffect(() => {
@@ -82,6 +84,27 @@ export function Topbar({ role, onMenuClick }) {
       window.clearInterval(intervalId);
     };
   }, [user?.user_id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadStudentProfile() {
+      if (role !== "student" || !user?.user_id) {
+        setStudentProfile(null);
+        return;
+      }
+      try {
+        const params = currentWorkspace?.type === "student" && currentWorkspace.class_id ? { class_id: currentWorkspace.class_id } : {};
+        const result = await getGamificationProfile(params);
+        if (!cancelled) setStudentProfile(result);
+      } catch {
+        if (!cancelled) setStudentProfile(null);
+      }
+    }
+    void loadStudentProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentWorkspace?.class_id, currentWorkspace?.type, role, user?.user_id]);
 
   function handleLogout() {
     setAccountOpen(false);
@@ -173,7 +196,6 @@ export function Topbar({ role, onMenuClick }) {
         )}
 
         <div className="flex items-center gap-2">
-          <ThemeToggle />
           <Button variant="ghost" size="sm" type="button" aria-label="Appearance settings" title="Appearance settings" onClick={openAppearanceSettings}>
             <Settings size={17} />
           </Button>
@@ -210,7 +232,7 @@ export function Topbar({ role, onMenuClick }) {
                     <div className="grid place-items-center rounded-[20px] bg-role-hover px-4 py-8 text-center dark:bg-slate-950/40">
                       <Bell className="text-role-primary" size={24} />
                       <p className="mt-3 text-sm font-black text-slate-800 dark:text-white">No notifications yet</p>
-                      <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">Class updates will appear here.</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">No updates.</p>
                     </div>
                   )}
                   {notifications.map((notification) => (
@@ -242,7 +264,12 @@ export function Topbar({ role, onMenuClick }) {
               </span>
               <span className="hidden min-w-0 sm:block">
                 <span className="block truncate text-xs font-black text-slate-950 dark:text-white">{displayName}</span>
-                <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400">{meta.label}</span>
+                <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                  {role === "student" ? studentProgressLabel : meta.label}
+                </span>
+                {role === "student" && studentStarsLabel && (
+                  <span className="block text-[11px] font-black text-amber-600 dark:text-amber-200">{studentStarsLabel}</span>
+                )}
               </span>
               <ChevronDown className={cn("hidden text-slate-400 transition-transform sm:block", accountOpen && "rotate-180")} size={15} />
             </button>
@@ -258,7 +285,12 @@ export function Topbar({ role, onMenuClick }) {
                   </span>
                   <div className="min-w-0">
                     <p className="truncate text-sm font-black text-slate-950 dark:text-white">{displayName}</p>
-                    <p className="truncate text-xs font-semibold text-slate-500 dark:text-slate-400">{displayEmail || meta.label}</p>
+                    <p className="truncate text-xs font-semibold text-slate-500 dark:text-slate-400">
+                      {role === "student" ? studentProgressLabel : displayEmail || meta.label}
+                    </p>
+                    {role === "student" && studentStarsLabel && (
+                      <p className="truncate text-xs font-black text-amber-600 dark:text-amber-200">{studentStarsLabel}</p>
+                    )}
                   </div>
                 </div>
 

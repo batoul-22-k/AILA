@@ -12,7 +12,6 @@ import {
   Radio,
   RefreshCw,
   Rocket,
-  Sparkles,
   UploadCloud,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -118,10 +117,10 @@ function WorkflowHeader({
 }) {
   const [classMenuOpen, setClassMenuOpen] = useState(false);
   const statusLabel = {
-    upload: "Waiting for material",
-    generate: "Generating questions",
-    review: "Needs instructor review",
-    ready: "Classroom package ready",
+    upload: "Upload",
+    generate: "Questions",
+    review: "Review",
+    ready: "Export",
   }[activeStage];
   const showActions = activeStage !== "upload" && (primaryAction || secondaryAction);
 
@@ -221,10 +220,8 @@ function UploadLectureStep({
           <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-role-soft text-role-primary">
             <UploadCloud size={28} />
           </span>
-          <h2 className="mt-4 text-xl font-black text-role-text dark:text-white">Upload lecture material</h2>
-          <p className="mt-2 text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">
-            Drop a PPTX or PDF, then confirm to start question generation.
-          </p>
+          <h2 className="mt-4 text-xl font-black text-role-text dark:text-white">Upload</h2>
+          <p className="mt-2 text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">Drop a PPTX or PDF.</p>
           <div className="mt-5">
             <UploadActionButton label="Choose file" loading={isUploading} disabled={isUploading} onFile={handleFile} />
           </div>
@@ -374,7 +371,7 @@ function GenerationPlanEditor({ plan, disabled, onLevelChange }) {
   if (plan.length === 0) {
     return (
       <div className="rounded-[20px] border border-role-border bg-white p-3 text-sm font-semibold text-[var(--color-muted)] dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
-        Add at least one question before starting generation.
+        Add at least one question.
       </div>
     );
   }
@@ -384,10 +381,7 @@ function GenerationPlanEditor({ plan, disabled, onLevelChange }) {
   return (
     <div className="grid gap-2">
       <div>
-        <p className="text-xs font-black uppercase tracking-wide text-role-primary">Question Bloom focus</p>
-        <p className="mt-1 text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">
-          Pick the cognitive level for each generated question.
-        </p>
+        <p className="text-xs font-black uppercase tracking-wide text-role-primary">Bloom focus</p>
       </div>
       <div className="grid max-h-72 gap-2 overflow-y-auto pr-1">
         {plan.map((item, index) => {
@@ -553,7 +547,7 @@ function QuestionReviewCard({
         )}
         {hasAnswerLeak && (
           <div className="mt-3 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-100">
-            The suggested answer appears inside the question. Edit the question or regenerate it before approval.
+            Edit this question before approval.
           </div>
         )}
       </div>
@@ -605,7 +599,7 @@ function QuestionReviewCard({
             />
           ) : (
             <span className="rounded-[20px] border border-role-border bg-role-hover px-3 py-3 text-sm font-semibold leading-6 text-[var(--color-muted)] dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
-              {question.explanation || "No explanation generated yet."}
+              {question.explanation || "No explanation yet."}
             </span>
           )}
         </label>
@@ -644,8 +638,8 @@ function getProcessingState({ upload, selectedFile, extractedText, generatedQues
   if (isUploading) {
     return {
       tone: "running",
-      title: "Uploading lecture material",
-      description: selectedFile?.name || "Sending the file to Content Studio.",
+      title: "Uploading",
+      description: selectedFile?.name || "Sending file.",
       progress: 18,
       icon: UploadCloud,
     };
@@ -653,26 +647,26 @@ function getProcessingState({ upload, selectedFile, extractedText, generatedQues
   if (isExtracting) {
     return {
       tone: "running",
-      title: "Preparing question generation",
-      description: upload?.filename || selectedFile?.name || "Preparing your lecture material for question generation.",
+      title: "Preparing",
+      description: upload?.filename || selectedFile?.name || "Preparing content.",
       progress: 35,
-      icon: Sparkles,
+      icon: FileText,
     };
   }
   if (isGenerating || isThinking) {
     return {
       tone: "running",
       title: "Generating questions",
-      description: generationLabel || "Creating the classroom question pack.",
+      description: generationLabel || "Creating questions.",
       progress: Math.max(42, generationPercent),
-      icon: Sparkles,
+      icon: ListChecks,
     };
   }
   if (generatedQuestions.length > 0) {
     return {
       tone: "complete",
-      title: "Ready for review",
-      description: `${generatedQuestions.length} questions are ready for instructor review.`,
+      title: "Ready",
+      description: `${generatedQuestions.length} questions`,
       progress: 100,
       icon: CheckCircle2,
     };
@@ -680,22 +674,22 @@ function getProcessingState({ upload, selectedFile, extractedText, generatedQues
   if (extractedText) {
     return {
       tone: "running",
-      title: "Preparing question generation",
-      description: "Your lecture material is ready. Question generation is starting.",
+      title: "Preparing",
+      description: "Content ready.",
       progress: 50,
-      icon: Sparkles,
+      icon: FileText,
     };
   }
   return {
     tone: "idle",
-    title: "Waiting for upload",
-    description: "Choose a PPTX or PDF to start.",
+    title: "Waiting",
+    description: "Choose a PPTX or PDF.",
     progress: 0,
     icon: UploadCloud,
   };
 }
 
-function AIProcessingCard({ state, upload, selectedFile, generatedQuestions }) {
+function ProcessingCard({ state }) {
   const Icon = state.icon;
   const toneClass = {
     idle: "bg-slate-50 text-slate-600 border-slate-200",
@@ -703,8 +697,6 @@ function AIProcessingCard({ state, upload, selectedFile, generatedQuestions }) {
     complete: "bg-emerald-50 text-emerald-700 border-emerald-200",
     error: "bg-red-50 text-red-700 border-red-200",
   }[state.tone];
-  const fileName = upload?.filename || selectedFile?.name || "No file selected";
-
   return (
     <DashboardCard className="bg-white">
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-center">
@@ -714,7 +706,7 @@ function AIProcessingCard({ state, upload, selectedFile, generatedQuestions }) {
               {state.tone === "running" ? <Loader2 className="animate-spin" size={23} /> : <Icon size={23} />}
             </span>
             <div className="min-w-0">
-              <p className="text-xs font-black uppercase tracking-wide text-role-primary">AI thinking timeline</p>
+              <p className="text-xs font-black uppercase tracking-wide text-role-primary">Progress</p>
               <h2 className="mt-1 truncate text-2xl font-black text-role-text dark:text-white">{state.title}</h2>
             </div>
           </div>
@@ -753,10 +745,10 @@ function QuestionReviewFeed({ questions, savedQuestions, editingQuestionId, busy
       <DashboardCard className="grid min-h-72 place-items-center bg-white text-center">
         <div className="max-w-md">
           <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-role-soft text-role-primary">
-            <Sparkles size={26} />
+            <ListChecks size={26} />
           </span>
-          <h2 className="mt-4 text-xl font-black text-role-text dark:text-white">Waiting for generated questions</h2>
-          <p className="mt-2 text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">The review feed will appear here as soon as the AI finishes preparing the classroom questions.</p>
+          <h2 className="mt-4 text-xl font-black text-role-text dark:text-white">No questions yet</h2>
+          <p className="mt-2 text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">Questions will appear here.</p>
         </div>
       </DashboardCard>
     );
@@ -795,10 +787,10 @@ function QuestionReviewFeed({ questions, savedQuestions, editingQuestionId, busy
     <section className="mx-auto w-full max-w-6xl rounded-[32px] border border-[var(--role-card-border)] bg-white p-5 shadow-[var(--role-card-shadow)] dark:border-slate-800 dark:bg-slate-900 sm:p-6">
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="min-w-0">
-          <p className="text-xs font-black uppercase tracking-wide text-role-primary">Instructor review</p>
-          <h2 className="mt-1 text-xl font-black text-role-text dark:text-white">Review one question at a time</h2>
+          <p className="text-xs font-black uppercase tracking-wide text-role-primary">Review</p>
+          <h2 className="mt-1 text-xl font-black text-role-text dark:text-white">Questions</h2>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">
-            {pendingCount === 0 ? "All questions are approved. Finish review to hide the question previews." : `${pendingCount} questions still need approval. Approving moves you to the next question.`}
+            {pendingCount === 0 ? "All questions approved." : `${pendingCount} need approval.`}
           </p>
         </div>
 
@@ -1002,13 +994,10 @@ export function WorkflowActionBar({
       <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="p-6 sm:p-7">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="green">Review complete</Badge>
+          <Badge tone="green">Approved</Badge>
             <Badge tone="slate">{approvedCount} approved</Badge>
           </div>
-          <h2 className="mt-4 text-2xl font-black tracking-tight text-role-text dark:text-white">Classroom package is ready</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">
-            Your approved questions are saved. Download the updated slides now, then create a live session when you are ready to teach.
-          </p>
+          <h2 className="mt-4 text-2xl font-black tracking-tight text-role-text dark:text-white">Ready</h2>
 
         </div>
 
@@ -1016,22 +1005,22 @@ export function WorkflowActionBar({
           <div className="grid h-full content-center gap-3">
             <Button type="button" variant="role" loading={isReconstructing} onClick={onDownloadPptx} disabled={!canDownload}>
               <Download size={17} />
-              Download Updated PPTX
+              Export
             </Button>
             {presentation && (
               <button className="rounded-[20px] border border-role-border bg-white p-3 text-left text-sm font-black text-role-primary transition hover:bg-role-soft dark:border-slate-800 dark:bg-slate-900" type="button" onClick={() => onDownloadReady(presentation)}>
-                Download ready: {presentation.filename}
+                Download {presentation.filename}
               </button>
             )}
             {createdSession ? (
               <Link className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-emerald-600 px-5 text-sm font-black text-white shadow-soft transition hover:bg-emerald-700" to={`/instructor/live/${createdSession.session_id}`}>
                 <Rocket size={17} />
-                Launch session {createdSession.session_code}
+                Open {createdSession.session_code}
               </Link>
             ) : (
               <Button type="button" variant="success" loading={isCreatingSession} onClick={onCreateSession} disabled={!canCreateSession}>
                 <Radio size={17} />
-                Create Live Session
+                Start
               </Button>
             )}
           </div>
@@ -1040,46 +1029,6 @@ export function WorkflowActionBar({
     </DashboardCard>
   );
 }
-
-/* function WorkflowSummary({ upload, uploadId, generatedCount, approvedCount, currentStep, presentation, createdSession }) {
-  const nextAction = {
-    upload: "Upload a PPTX or PDF.",
-    extract: "Confirm the extracted text and generate questions.",
-    generate: "Wait for AI generation to finish.",
-    review: approvedCount > 0 ? "Download a PPTX or create a live session." : "Approve at least one question.",
-  }[currentStep]; */
-
- /*  return (
-    <DashboardCard className="lg:sticky lg:top-24">
-      <h2 className="text-base font-black text-slate-950 dark:text-white">Workflow summary</h2>
-      <div className="mt-4 grid gap-3 text-sm">
-        <div className="flex items-center justify-between gap-3">
-          <span className="font-semibold text-slate-500 dark:text-slate-400">File</span>
-          <span className="text-right font-black text-slate-800 dark:text-slate-100">{upload?.filename ?? "Not uploaded"}</span>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <span className="font-semibold text-slate-500 dark:text-slate-400">Upload ID</span>
-          <span className="max-w-40 truncate text-right font-black text-slate-800 dark:text-slate-100">{uploadId ?? "None"}</span>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <span className="font-semibold text-slate-500 dark:text-slate-400">Generated</span>
-          <span className="font-black text-slate-800 dark:text-slate-100">{generatedCount}</span>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <span className="font-semibold text-slate-500 dark:text-slate-400">Approved</span>
-          <span className="font-black text-slate-800 dark:text-slate-100">{approvedCount}</span>
-        </div>
-      </div>
-      <div className="mt-5 rounded-[var(--role-radius)] bg-role-hover p-4">
-        <p className="text-xs font-black uppercase tracking-wide text-role-accent">Next recommended action</p>
-        <p className="mt-1 text-sm font-semibold leading-6 text-slate-700 dark:text-slate-200">{nextAction}</p>
-      </div>
-      {presentation && <Badge className="mt-4" tone="green">PPTX ready</Badge>}
-      {createdSession && <Badge className="mt-4" tone="green">Session created</Badge>}
-    </DashboardCard>
-  );
-}
- */
 
 export function ContentStudioPage() {
   const { user } = useAuth();
@@ -1128,7 +1077,7 @@ export function ContentStudioPage() {
 
   function notifyError(err, fallback) {
     const description = err instanceof Error ? err.message : fallback;
-    showToast({ title: "Action could not be completed", description, tone: "error" });
+    showToast({ title: "Something went wrong", description, tone: "error" });
   }
 
   function notifyAiServiceStatus(status, { success = false } = {}) {
@@ -1139,8 +1088,8 @@ export function ContentStudioPage() {
     if (running && modelReady) {
       if (success) {
         showToast({
-          title: "AI engine ready",
-          description: status?.message || modelText || "Question generation can start.",
+          title: "Ready",
+          description: status?.message || modelText || "Questions can be created.",
           tone: "success",
           duration: 3200,
         });
@@ -1150,8 +1099,8 @@ export function ContentStudioPage() {
 
     if (running) {
       showToast({
-        title: "AI model missing",
-        description: status?.model ? `Run: ollama pull ${status.model}` : status?.message || "Install the configured Ollama model before generating questions.",
+        title: "Model missing",
+        description: status?.message || "Install the configured model.",
         tone: "warning",
         duration: 7000,
       });
@@ -1159,8 +1108,8 @@ export function ContentStudioPage() {
     }
 
     showToast({
-      title: "AI engine offline",
-      description: status?.message || "Ollama is not running. Content Studio will try to start it when generation begins.",
+      title: "Generator offline",
+      description: status?.message || "The generator will start when needed.",
       tone: "warning",
       duration: 6000,
     });
@@ -1197,7 +1146,7 @@ export function ContentStudioPage() {
       const offline = {
         running: false,
         model_available: false,
-        message: err instanceof Error ? err.message : "Could not check AI service",
+        message: err instanceof Error ? err.message : "Could not check generator",
       };
       if (notify) notifyAiServiceStatus(offline);
       return offline;
@@ -1215,7 +1164,7 @@ export function ContentStudioPage() {
       }
       return status;
     } catch (err) {
-      notifyError(err, "Could not start AI service");
+      notifyError(err, "Could not start generator");
       return null;
     }
   }
@@ -1368,7 +1317,7 @@ export function ContentStudioPage() {
       localStorage.setItem(studioKey(classId, "questions"), JSON.stringify([]));
       localStorage.setItem(studioKey(classId, "approvedQuestionIds"), JSON.stringify([]));
       setCurrentStep("generate");
-      notifySuccess("Lecture uploaded", "Question generation is starting now.");
+      notifySuccess("Uploaded");
       setIsUploading(false);
       await handleGenerate({ uploadId: result.upload_id, extractedText: text });
     } catch (err) {
@@ -1389,17 +1338,17 @@ export function ContentStudioPage() {
     setError("");
     const activePlan = buildGenerationPlan(generationSettings);
     setGenerationProgress({ current: 0, total: activePlan.length });
-    setGenerationLabel("Preparing AI question generation...");
+    setGenerationLabel("Preparing questions...");
     try {
       if (activePlan.length === 0) throw new Error("Advanced options must include at least one question.");
       if (!activeUploadId || !activeExtractedText) throw new Error("Upload a lecture before generating questions.");
       let status = await refreshAiStatus();
       if (!status.running) status = await handleStartAi();
-      if (!status?.running) throw new Error("AI service is offline. Start Ollama and try again.");
-      if (!status.model_available) throw new Error(`Ollama model '${status.model}' is missing. Run: ollama pull ${status.model}`);
+      if (!status?.running) throw new Error("Generator is offline.");
+      if (!status.model_available) throw new Error("Model is missing.");
       const generatedQuestionsBatch = [];
       for (const [index, planItem] of activePlan.entries()) {
-        setGenerationLabel(`Thinking about a ${planItem.level} ${questionTypeLabel(planItem.type)} question...`);
+        setGenerationLabel(`Creating ${questionTypeLabel(planItem.type)} ${index + 1}...`);
         setGenerationProgress({ current: index, total: activePlan.length });
         setIsThinking(true);
         await sleep(350);
@@ -1419,10 +1368,10 @@ export function ContentStudioPage() {
       setGeneratedQuestions(generatedQuestionsBatch);
       setEditingSavedQuestionId(null);
       localStorage.setItem(studioKey(classId, "questions"), JSON.stringify(generatedQuestionsBatch));
-      setGenerationLabel("Question ready for review.");
+      setGenerationLabel("Ready for review.");
       setGenerationPhase(generatedQuestionsBatch.length > 0 ? "reviewing" : "complete");
       if (generatedQuestionsBatch.length > 0) setCurrentStep("saved");
-      notifySuccess("Questions generated", `${generatedQuestionsBatch.length} questions are ready for review.`);
+      notifySuccess("Questions generated");
     } catch (err) {
       notifyError(err, "Question generation failed");
       setGenerationPhase("idle");
@@ -1440,7 +1389,7 @@ export function ContentStudioPage() {
   async function handleApproveQuestion(question) {
     if (!question || savedQuestions.some((item) => item.question_id === question.question_id)) return;
     if (answerLeaksIntoQuestion(question)) {
-      notifyError(new Error("The suggested answer appears inside the question. Edit or regenerate it before approval."), "Could not approve question");
+      notifyError(new Error("Edit this question before approval."), "Could not approve question");
       return;
     }
     setIsApproving(true);
@@ -1454,7 +1403,7 @@ export function ContentStudioPage() {
       });
       setGeneratedQuestions((current) => current.map((item) => (item.question_id === question.question_id ? approved : item)));
       setGenerationPhase("reviewing");
-      notifySuccess("Question approved", "It was added to the classroom package.");
+      notifySuccess("Approved");
     } catch (err) {
       notifyError(err, "Could not approve question");
     } finally {
@@ -1488,7 +1437,7 @@ export function ContentStudioPage() {
         current.map((question) => approvedBatch.find((approved) => approved.question_id === question.question_id) || question),
       );
       setCurrentStep("session");
-      notifySuccess("All questions approved", "The classroom package is ready to launch.");
+      notifySuccess("Approved");
     } catch (err) {
       notifyError(err, "Could not approve all questions");
     } finally {
@@ -1529,7 +1478,7 @@ export function ContentStudioPage() {
       }
       setGenerationProgress({ current: 1, total: 1 });
       setGenerationPhase("reviewing");
-      notifySuccess("Question regenerated", "A new version is ready for review.");
+      notifySuccess("Regenerated");
     } catch (err) {
       notifyError(err, "Question regeneration failed");
     } finally {
@@ -1548,7 +1497,7 @@ export function ContentStudioPage() {
       });
       setPresentation(result);
       await downloadApiFile(result.download_url, result.filename);
-      notifySuccess("PPTX ready", "The updated deck download has started.");
+      notifySuccess("Export ready");
     } catch (err) {
       notifyError(err, "Could not create updated PPTX");
     } finally {
@@ -1559,7 +1508,7 @@ export function ContentStudioPage() {
   async function handleDownloadReady(presentationResult) {
     try {
       await downloadApiFile(presentationResult.download_url, presentationResult.filename);
-      notifySuccess("Download started", presentationResult.filename);
+      notifySuccess("Download started");
     } catch (err) {
       notifyError(err, "Could not download PPTX");
     }
@@ -1573,7 +1522,7 @@ export function ContentStudioPage() {
       setCreatedSession(session);
       localStorage.setItem("instructorSession", JSON.stringify(session));
       setCurrentStep("session");
-      notifySuccess("Session created", `Session code ${session.session_code} is ready.`);
+      notifySuccess("Session started");
     } catch (err) {
       notifyError(err, "Could not create live session");
     } finally {
@@ -1584,7 +1533,7 @@ export function ContentStudioPage() {
   function handleFinishQuestionReview() {
     setEditingSavedQuestionId(null);
     setCurrentStep("session");
-    notifySuccess("Review complete", "Question previews are hidden. The classroom package is ready.");
+    notifySuccess("Done");
   }
 
   function handleStartNewFile() {
@@ -1614,7 +1563,7 @@ export function ContentStudioPage() {
     localStorage.setItem(studioKey(classId, "approvedQuestionIds"), JSON.stringify([]));
     localStorage.setItem("instructorApprovedQuestionIds", JSON.stringify([]));
     localStorage.removeItem("instructorSession");
-    notifySuccess("Ready for another file", "Choose a new lecture material to start again.");
+    notifySuccess("Ready");
   }
 
   const selectedClass = classes.find((classDoc) => classDoc.class_id === selectedClassId);
@@ -1681,12 +1630,12 @@ export function ContentStudioPage() {
       to={`/instructor/live/${createdSession.session_id}`}
     >
       <Rocket size={17} />
-      Launch live session
+      Open live
     </Link>
   ) : activeStage === "generate" ? (
     <Button type="button" variant="outline" disabled>
       <Loader2 className="animate-spin" size={17} />
-      AI working
+      Creating
     </Button>
   ) : (
     null
@@ -1718,11 +1667,8 @@ export function ContentStudioPage() {
       )}
     </div>
   ) : uploadId || isUploading || isExtracting || isGenerating || extractedText ? (
-    <AIProcessingCard
+    <ProcessingCard
       state={processingState}
-      upload={upload}
-      selectedFile={selectedFile}
-      generatedQuestions={generatedQuestions}
     />
   ) : (
     <UploadLectureStep
@@ -1757,7 +1703,7 @@ export function ContentStudioPage() {
       >
         <div className="grid gap-4">
           <p className="text-sm leading-6 text-[var(--color-muted)] dark:text-slate-400">
-            Content Studio will use this file, question mix, and Bloom focus plan to create questions for review.
+            Review the file and question mix before starting.
           </p>
           <div className="grid gap-2 rounded-[24px] border border-role-border bg-role-hover p-4 dark:border-slate-800 dark:bg-slate-950">
             <div>
@@ -1793,14 +1739,14 @@ export function ContentStudioPage() {
               Cancel
             </Button>
             <Button type="button" variant="role" onClick={confirmGenerationStart} disabled={!pendingGenerationFile || !classId || pendingGenerationTotal === 0} loading={isUploading || isGenerating}>
-              <Sparkles size={17} />
-              Start generation
+              <Rocket size={17} />
+              Start
             </Button>
           </div>
         </div>
       </Modal>
 
-      {!classId && <EmptyState title="Create a class first" description="Content Studio needs a class before lecture uploads, generated questions, and live sessions can be organized." />}
+      {!classId && <EmptyState title="Create a class first" description="Choose a class to begin." />}
 
       {classId && <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="min-w-0 grid gap-4">

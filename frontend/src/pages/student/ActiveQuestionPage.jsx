@@ -5,6 +5,7 @@ import { getLiveSession, getLiveSessionQuestions, getWebSocketUrl, submitAnswer 
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { DashboardCard } from "../../components/DashboardCard";
+import { EmptyState } from "../../components/EmptyState";
 import { Modal } from "../../components/Modal";
 import { PageHeader } from "../../components/PageHeader";
 import { QuestionCard } from "../../components/QuestionCard";
@@ -26,7 +27,8 @@ function formatTime(seconds) {
 
 function secondsUntil(value, fallback = QUESTION_DURATION_SECONDS) {
   if (!value) return fallback;
-  const endTime = new Date(value).getTime();
+  const normalizedValue = typeof value === "string" && !/[zZ]|[+-]\d{2}:\d{2}$/.test(value) ? `${value}Z` : value;
+  const endTime = new Date(normalizedValue).getTime();
   if (Number.isNaN(endTime)) return fallback;
   return Math.max(Math.ceil((endTime - Date.now()) / 1000), 0);
 }
@@ -49,15 +51,15 @@ function storeSession(session) {
   if (session.active_question_id) {
     localStorage.setItem(`activeQuestionId:${session.session_id}`, session.active_question_id);
     localStorage.setItem("activeQuestionId", session.active_question_id);
+  } else {
+    localStorage.removeItem(`activeQuestionId:${session.session_id}`);
   }
 }
 
 function getActiveQuestionId(session, questionIds) {
+  if (session?.active_question_id && questionIds.length === 0) return session.active_question_id;
   if (session?.active_question_id && questionIds.includes(session.active_question_id)) return session.active_question_id;
-  const scopedQuestionId = session?.session_id ? localStorage.getItem(`activeQuestionId:${session.session_id}`) : null;
-  const storedQuestionId = scopedQuestionId || localStorage.getItem("activeQuestionId");
-  if (questionIds.includes(storedQuestionId)) return storedQuestionId;
-  return questionIds[0] ?? "";
+  return "";
 }
 
 function getAnswerKey(sessionId, questionId) {
@@ -75,29 +77,35 @@ export function ActiveQuestionPage() {
   const questionIds = useMemo(() => session?.question_ids ?? [], [session]);
   const [questions, setQuestions] = useState([]);
   const [activeQuestionId, setActiveQuestionId] = useState(() => getActiveQuestionId(session, questionIds));
-  const activeQuestionIndex = Math.max(0, questionIds.indexOf(activeQuestionId));
+  const [selected, setSelected] = useState(() => getStoredAnswer(session?.session_id, getActiveQuestionId(session, questionIds)));
+  const [submitting, setSubmitting] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(QUESTION_DURATION_SECONDS);
+  const [badgeOpen, setBadgeOpen] = useState(false);
+  const displayedQuestionIds = questionIds.length > 0 ? questionIds : questions.map((question) => question.question_id);
+  const activeQuestionIndex = Math.max(0, displayedQuestionIds.indexOf(activeQuestionId));
   const activeQuestionNumber = activeQuestionIndex + 1;
-  const totalQuestions = Math.max(questionIds.length, 1);
+  const totalQuestions = Math.max(displayedQuestionIds.length, 1);
   const activeQuestion = questions.find((question) => question.question_id === activeQuestionId);
   const isMcq = activeQuestion ? (activeQuestion.type ? activeQuestion.type === "mcq" : (activeQuestion.options?.length ?? 0) > 0) : true;
   const questionType = isMcq ? "MCQ" : "Short answer";
   const hasSubmitted = Boolean(activeQuestion?.student_answer);
   const isRevealed = Boolean(activeQuestion?.is_revealed);
-  const isTimeExpired = !isRevealed && Boolean(session?.question_ends_at) && timeLeft <= 0;
+  const hasQuestionTimer = Boolean(session?.question_ends_at);
+  const isTimeExpired = !isRevealed && hasQuestionTimer && timeLeft <= 0;
   const isAnswerLocked = isRevealed || isTimeExpired;
+  const questionStatus = !activeQuestionId ? "Waiting" : !activeQuestion ? "Loading" : isRevealed ? "Revealed" : isTimeExpired ? "Time ended" : hasSubmitted ? "Submitted" : "Live";
+  const questionPrompt = activeQuestion?.question_text || (activeQuestionId ? "Loading the active question..." : "Waiting for the instructor to activate the next question.");
+  const questionTitle = activeQuestionId ? `Question ${activeQuestionNumber} of ${totalQuestions}` : "Waiting for a live question";
+  const questionSubtitle = activeQuestionId ? `ID: ${shortenQuestionId(activeQuestionId)}` : "No question is live yet";
   const sessionStars = Math.max(0, ...questions.map((question) => Number(question.session_stars || 0)));
   const badgeQuestion = questions.find((question) => question.badge_earned);
-  const [selected, setSelected] = useState(() => getStoredAnswer(session?.session_id, getActiveQuestionId(session, questionIds)));
-  const [submitting, setSubmitting] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(QUESTION_DURATION_SECONDS);
-  const [badgeOpen, setBadgeOpen] = useState(false);
 
-  async function loadLiveState(showError = true) {
-    if (!session?.session_id) return;
+  async function loadLiveState(showError = true, targetSessionId = session?.session_id) {
+    if (!targetSessionId) return;
     try {
       const [sessionResult, questionsResult] = await Promise.all([
-        getLiveSession(session.session_id),
-        getLiveSessionQuestions(session.session_id),
+        getLiveSession(targetSessionId),
+        getLiveSessionQuestions(targetSessionId),
       ]);
       storeSession(sessionResult);
       setSession(sessionResult);
@@ -121,9 +129,9 @@ export function ActiveQuestionPage() {
   useEffect(() => {
     let isMounted = true;
 
-    if (isMounted) void loadLiveState();
+    if (isMounted) void loadLiveState(true, session?.session_id);
     const refreshInterval = window.setInterval(() => {
-      if (isMounted) void loadLiveState(false);
+      if (isMounted) void loadLiveState(false, session?.session_id);
     }, 4000);
     return () => {
       isMounted = false;
@@ -144,9 +152,21 @@ export function ActiveQuestionPage() {
 
     function handleActivatedQuestion(event) {
       if (!event.detail?.questionId) return;
-      if (event.detail.sessionId && session?.session_id && event.detail.sessionId !== session.session_id) return;
-      storeActiveQuestion(session, event.detail.questionId);
-      setSession((current) => ({ ...(current || session), active_question_id: event.detail.questionId }));
+      if (!session?.session_id) return;
+      if (event.detail.sessionId && event.detail.sessionId !== session.session_id) return;
+      const nextSession = {
+        ...(session || {}),
+        active_question_id: event.detail.questionId,
+        question_duration_seconds: event.detail.questionDurationSeconds ?? null,
+        question_ends_at: event.detail.questionEndsAt ?? null,
+      };
+      storeActiveQuestion(nextSession, event.detail.questionId);
+      setSession((current) => ({
+        ...(current || session),
+        active_question_id: event.detail.questionId,
+        question_duration_seconds: event.detail.questionDurationSeconds ?? null,
+        question_ends_at: event.detail.questionEndsAt ?? null,
+      }));
       setActiveQuestionId(event.detail.questionId);
     }
 
@@ -160,7 +180,8 @@ export function ActiveQuestionPage() {
 
   useEffect(() => {
     if (!session?.session_id) return undefined;
-    const socket = new WebSocket(getWebSocketUrl(session.session_id));
+    const socketSessionId = session.session_id;
+    const socket = new WebSocket(getWebSocketUrl(socketSessionId));
 
     socket.onmessage = (event) => {
       try {
@@ -170,32 +191,40 @@ export function ActiveQuestionPage() {
             ...(session || {}),
             active_question_id: message.payload.question_id,
             question_started_at: message.payload.question_started_at || session?.question_started_at,
-            question_duration_seconds: message.payload.question_duration_seconds ?? session?.question_duration_seconds,
-            question_ends_at: message.payload.question_ends_at || session?.question_ends_at,
+            question_duration_seconds: Object.prototype.hasOwnProperty.call(message.payload, "question_duration_seconds")
+              ? message.payload.question_duration_seconds
+              : session?.question_duration_seconds,
+            question_ends_at: Object.prototype.hasOwnProperty.call(message.payload, "question_ends_at")
+              ? message.payload.question_ends_at
+              : session?.question_ends_at,
           };
           storeActiveQuestion(nextSession, message.payload.question_id);
           setSession((current) => ({
             ...(current || session),
             active_question_id: message.payload.question_id,
             question_started_at: message.payload.question_started_at || current?.question_started_at,
-            question_duration_seconds: message.payload.question_duration_seconds ?? current?.question_duration_seconds,
-            question_ends_at: message.payload.question_ends_at || current?.question_ends_at,
+            question_duration_seconds: Object.prototype.hasOwnProperty.call(message.payload, "question_duration_seconds")
+              ? message.payload.question_duration_seconds
+              : current?.question_duration_seconds,
+            question_ends_at: Object.prototype.hasOwnProperty.call(message.payload, "question_ends_at")
+              ? message.payload.question_ends_at
+              : current?.question_ends_at,
           }));
           setActiveQuestionId(message.payload.question_id);
-          setTimeLeft(secondsUntil(message.payload.question_ends_at, message.payload.question_duration_seconds || QUESTION_DURATION_SECONDS));
+          setTimeLeft(message.payload.question_ends_at ? secondsUntil(message.payload.question_ends_at, message.payload.question_duration_seconds || QUESTION_DURATION_SECONDS) : 0);
           showToast({ title: "New question active", description: message.payload.message || "A new question is active.", tone: "info" });
-          void loadLiveState(false);
+          void loadLiveState(false, socketSessionId);
         }
         if (message.type === "answer_revealed") {
           showToast({ title: "Answer revealed", description: "Your feedback is now available.", tone: "success" });
-          void loadLiveState(false);
+          void loadLiveState(false, socketSessionId);
         }
         if (message.type === "reward_earned") {
-          void loadLiveState(false);
+          void loadLiveState(false, socketSessionId);
         }
         if (message.type === "session_finished") {
-          showToast({ title: "Session finished", description: "Your session results are ready.", tone: "info" });
-          void loadLiveState(false);
+          showToast({ title: "Session completed", description: "Your session results are ready.", tone: "info" });
+          void loadLiveState(false, socketSessionId);
         }
       } catch {
         // Ignore malformed live messages.
@@ -207,12 +236,12 @@ export function ActiveQuestionPage() {
 
   useEffect(() => {
     setSelected(activeQuestion?.student_answer || getStoredAnswer(session?.session_id, activeQuestionId));
-    setTimeLeft(secondsUntil(session?.question_ends_at, session?.question_duration_seconds || QUESTION_DURATION_SECONDS));
+    setTimeLeft(session?.question_ends_at ? secondsUntil(session.question_ends_at, session?.question_duration_seconds || QUESTION_DURATION_SECONDS) : 0);
   }, [activeQuestion?.student_answer, activeQuestionId, questionIds.length, session?.question_duration_seconds, session?.question_ends_at, session?.session_id]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      setTimeLeft(secondsUntil(session?.question_ends_at, session?.question_duration_seconds || QUESTION_DURATION_SECONDS));
+      setTimeLeft(session?.question_ends_at ? secondsUntil(session.question_ends_at, session?.question_duration_seconds || QUESTION_DURATION_SECONDS) : 0);
     }, 1000);
     return () => window.clearInterval(interval);
   }, [activeQuestionId, session?.question_duration_seconds, session?.question_ends_at]);
@@ -254,12 +283,24 @@ export function ActiveQuestionPage() {
         answer: selected,
       });
       showToast({ title: "Answer submitted", description: "Your instructor will reveal feedback when ready.", tone: "success" });
-      await loadLiveState(false);
+      await loadLiveState(false, session.session_id);
     } catch (err) {
       showToast({ title: "Could not submit answer", description: err instanceof Error ? err.message : "Could not submit answer", tone: "error" });
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (!session?.session_id) {
+    return (
+      <div className="page-grid">
+        <PageHeader eyebrow="Live class" title="Active question" description="Answer the question currently selected by your instructor." tone="role" />
+        <EmptyState
+          title="No live session joined"
+          description="Join the session again from the Join Session page. The previous demo-looking view meant the saved session data was missing or stale."
+        />
+      </div>
+    );
   }
 
   return (
@@ -268,11 +309,11 @@ export function ActiveQuestionPage() {
       <div className="mx-auto grid w-full max-w-5xl gap-4 lg:grid-cols-[1fr_320px]">
         {isMcq ? (
           <QuestionCard
-            title={`Question ${activeQuestionNumber} of ${totalQuestions}`}
-            subtitle={`ID: ${shortenQuestionId(activeQuestionId)}`}
+            title={questionTitle}
+            subtitle={questionSubtitle}
             type={questionType}
-            status={isRevealed ? "Revealed" : isTimeExpired ? "Time ended" : hasSubmitted ? "Submitted" : "Live"}
-            prompt={activeQuestion?.question_text || "Waiting for the instructor to activate the next question."}
+            status={questionStatus}
+            prompt={questionPrompt}
             options={activeQuestion?.options || []}
             selected={selected}
             onSelect={handleSelect}
@@ -285,14 +326,14 @@ export function ActiveQuestionPage() {
           <DashboardCard>
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-role-border pb-4 dark:border-slate-800">
               <div>
-                <h3 className="font-black text-slate-950 dark:text-white">Question {activeQuestionNumber} of {totalQuestions}</h3>
-                <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">ID: {shortenQuestionId(activeQuestionId)}</p>
+                <h3 className="font-black text-slate-950 dark:text-white">{questionTitle}</h3>
+                <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">{questionSubtitle}</p>
                 <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{questionType}</p>
               </div>
-              <Badge tone={isRevealed ? "green" : isTimeExpired ? "gold" : hasSubmitted ? "green" : "teal"}>{isRevealed ? "Revealed" : isTimeExpired ? "Time ended" : hasSubmitted ? "Submitted" : "Live"}</Badge>
+              <Badge tone={!activeQuestion ? "slate" : isRevealed ? "green" : isTimeExpired ? "gold" : hasSubmitted ? "green" : "teal"}>{questionStatus}</Badge>
             </div>
             <p className="mt-5 text-lg font-black leading-7 text-slate-950 dark:text-white">
-              {activeQuestion?.question_text || "Waiting for the instructor to activate the next question."}
+              {questionPrompt}
             </p>
             <label className="mt-5 grid gap-2 text-sm font-black text-slate-700 dark:text-slate-200">
               Your answer
@@ -322,7 +363,7 @@ export function ActiveQuestionPage() {
                 <Timer size={17} />
                 Time left
               </span>
-              <span className="font-black">{formatTime(timeLeft)}</span>
+              <span className="font-black">{activeQuestionId ? (hasQuestionTimer ? formatTime(timeLeft) : "Unlimited") : "Not started"}</span>
             </div>
             {/* <div className="flex items-center justify-between rounded-lg bg-slate-50 p-3 dark:bg-slate-950">
               <span className="flex items-center gap-2 text-sm font-bold text-slate-600 dark:text-slate-300">
@@ -350,6 +391,12 @@ export function ActiveQuestionPage() {
               </div>
               <p className="mt-3 text-sm font-bold">Correct answer: {activeQuestion?.correct_answer || "Available from your instructor"}</p>
               {activeQuestion?.explanation && <p className="mt-2 text-sm font-semibold leading-6 opacity-90">{activeQuestion.explanation}</p>}
+              {activeQuestion?.instructor_feedback && (
+                <div className="mt-3 rounded-xl bg-white/60 p-3 text-sm font-semibold leading-6 dark:bg-slate-950/40">
+                  <p className="text-xs font-black uppercase tracking-wide opacity-70">Instructor feedback</p>
+                  <p className="mt-1">{activeQuestion.instructor_feedback}</p>
+                </div>
+              )}
             </div>
           )}
           <Button className="mt-5 w-full" size="lg" variant={isAnswerLocked ? "outline" : "role"} loading={submitting} disabled={!activeQuestion || !selected.trim() || isAnswerLocked} onClick={handleSubmit}>
