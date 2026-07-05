@@ -1,5 +1,5 @@
-import { Badge } from "./Badge";
 import { DashboardCard } from "./DashboardCard";
+import { StatusIcon } from "./StatusIcon";
 
 export function ResponsiveTable({ columns, rows }) {
   return (
@@ -56,6 +56,5 @@ export function ResponsiveTable({ columns, rows }) {
 }
 
 export function RiskBadge({ level }) {
-  const tone = level === "Critical" ? "red" : level === "High" ? "orange" : level === "Medium" ? "gold" : "green";
-  return <Badge tone={tone}>{level}</Badge>;
+  return <StatusIcon status={level === "Critical" ? "High" : level} />;
 }

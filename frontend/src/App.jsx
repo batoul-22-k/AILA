@@ -12,7 +12,7 @@ import { AdminEducationalAnalyticsPage, AdminEducationalPredictionsPage, AdminPr
 import { AppearanceSettingsPage } from "./pages/instructor/AppearanceSettingsPage";
 import { ContentStudioPage } from "./pages/instructor/ContentStudioPage";
 import { CreateLiveSessionPage } from "./pages/instructor/CreateLiveSessionPage";
-import { InstructorAnalyticsPage } from "./pages/instructor/InstructorAnalyticsPage";
+import { InstructorAnalyticsPage, InstructorStudentsAnalyticsPage } from "./pages/instructor/InstructorAnalyticsPage";
 import { InstructorAtRiskStudentsPage } from "./pages/instructor/InstructorAtRiskStudentsPage";
 import { InstructorClassDetailPage } from "./pages/instructor/InstructorClassDetailPage";
 import { InstructorClassesPage } from "./pages/instructor/InstructorClassesPage";
@@ -86,7 +86,10 @@ export default function App() {
             <Route path="instructor/code" element={<SessionCodePage />} />
             <Route path="instructor/live" element={<LiveParticipationDashboardPage />} />
             <Route path="instructor/live/:sessionId" element={<LiveParticipationDashboardPage />} />
+            <Route path="instructor/students" element={<Navigate to="/instructor/analytics/students" replace />} />
             <Route path="instructor/analytics" element={<InstructorAnalyticsPage />} />
+            <Route path="instructor/analytics/students" element={<InstructorStudentsAnalyticsPage />} />
+            <Route path="instructor/analytics/insights" element={<Navigate to="/instructor/analytics" replace />} />
             <Route path="instructor/at-risk" element={<InstructorAtRiskStudentsPage />} />
             <Route path="instructor/settings" element={<Navigate to="/instructor/settings/appearance" replace />} />
             <Route path="instructor/settings/appearance" element={<AppearanceSettingsPage />} />

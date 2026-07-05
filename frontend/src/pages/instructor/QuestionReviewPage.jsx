@@ -13,6 +13,7 @@ import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { DashboardCard } from "../../components/DashboardCard";
 import { EmptyState } from "../../components/EmptyState";
+import { IconButton } from "../../components/IconButton";
 import { PageHeader } from "../../components/PageHeader";
 import { useToast } from "../../components/ToastProvider";
 
@@ -143,23 +144,14 @@ export function QuestionReviewPage() {
                 </label>
               </div>
 
-              <div className="grid content-start gap-2">
-                <Button variant="outline" type="button" onClick={() => handleSave(question)}>
-                  <Save size={17} />
-                  Save
-                </Button>
+              <div className="flex content-start flex-wrap gap-2 lg:grid">
+                <IconButton label="Save question" icon={Save} onClick={() => handleSave(question)} />
                 <Button variant="success" type="button" onClick={() => handleApprove(question.question_id)}>
                   <CheckCircle2 size={17} />
                   Approve
                 </Button>
-                <Button variant="outline" type="button" onClick={() => handleRegenerate(question)}>
-                  <RefreshCw size={17} />
-                  Regenerate
-                </Button>
-                <Button variant="outline" type="button" onClick={() => handleDelete(question.question_id)}>
-                  <Trash2 size={17} />
-                  Delete
-                </Button>
+                <IconButton label="Refresh question" icon={RefreshCw} onClick={() => handleRegenerate(question)} />
+                <IconButton label="Delete question" icon={Trash2} onClick={() => handleDelete(question.question_id)} tone="danger" />
               </div>
             </div>
           </DashboardCard>

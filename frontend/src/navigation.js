@@ -1,5 +1,6 @@
 import {
   Activity,
+  AlertTriangle,
   BarChart3,
   BookOpen,
   BrainCircuit,
@@ -13,6 +14,7 @@ import {
   ShieldCheck,
   Trophy,
   Users,
+  UsersRound,
 } from "lucide-react";
 
 export const rolePalettes = {
@@ -160,7 +162,17 @@ export const navigation = {
     { to: "/instructor/content-studio", label: "Content Studio", icon: FileText },
     { to: "/instructor/sessions", label: "Sessions", icon: Radio },
     { to: "/instructor/live", label: "Live Class", icon: Activity },
-    { to: "/instructor/analytics", label: "Analytics", icon: LineChart },
+    {
+      to: "/instructor/analytics",
+      label: "Analytics",
+      icon: LineChart,
+      matchPrefix: "/instructor/analytics",
+      children: [
+        { to: "/instructor/analytics", label: "Overview", icon: BarChart3, end: true },
+        { to: "/instructor/analytics/students", label: "Students", icon: UsersRound, end: true },
+        { to: "/instructor/at-risk", label: "At-Risk Students", icon: AlertTriangle, end: true },
+      ],
+    },
   ],
   admin: [
     { to: "/admin", label: "Dashboard", icon: Gauge, end: true },

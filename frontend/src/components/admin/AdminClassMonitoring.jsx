@@ -1,9 +1,11 @@
-import { Activity, Eye, Filter, Info, TrendingDown, TrendingUp } from "lucide-react";
+import { Activity, AlertTriangle, BookOpen, Calendar, Eye, GraduationCap, Info, Target, TrendingDown, TrendingUp } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Badge } from "../Badge";
 import { DashboardCard } from "../DashboardCard";
+import { HeaderIconLabel, StatusIcon } from "../StatusIcon";
+import { TableHeaderFilter } from "../table";
 
 const filters = [
   { key: "all", label: "All" },
@@ -18,12 +20,6 @@ function trendIcon(trend) {
   if (trend === "declining") return <TrendingDown size={16} className="text-red-500" />;
   if (trend === "improving") return <TrendingUp size={16} className="text-emerald-500" />;
   return <Activity size={16} className="text-role-primary" />;
-}
-
-function statusTone(status) {
-  if (status === "Critical") return "red";
-  if (status === "Attention") return "gold";
-  return "green";
 }
 
 function matches(row, filter) {
@@ -83,33 +79,31 @@ export function AdminClassMonitoring({ classes = [], compact = false }) {
         <div>
           <p className="text-xs font-black uppercase tracking-wide text-role-primary">Class health overview</p>
                   </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Filter size={16} className="text-slate-400" />
-          {filters.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className={`rounded-full px-3 py-1.5 text-xs font-black transition ${filter === item.key ? "bg-role-primary text-white" : "bg-role-hover text-slate-600 hover:text-role-primary dark:bg-slate-950/40 dark:text-slate-300"}`}
-              onClick={() => setFilter(item.key)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        {filter !== "all" && (
+          <Badge tone="slate" className="px-2 py-0.5">
+            {filters.find((item) => item.key === filter)?.label}
+          </Badge>
+        )}
       </div>
 
       <div className="mt-3 overflow-x-auto rounded-lg border border-role-border dark:border-slate-800">
         <table className="min-w-[980px] w-full border-separate border-spacing-0 text-left text-sm">
           <thead className="bg-role-hover text-[11px] font-black uppercase tracking-wide text-slate-500 dark:bg-slate-950">
             <tr>
-              <th className="border-b border-role-border px-3 py-2.5 dark:border-slate-800">Class</th>
-              <th className="border-b border-role-border px-3 py-2.5 dark:border-slate-800">Instructor</th>
+              <th className="border-b border-role-border px-3 py-2.5 dark:border-slate-800"><HeaderIconLabel icon={BookOpen} label="Class" /></th>
+              <th className="border-b border-role-border px-3 py-2.5 dark:border-slate-800"><HeaderIconLabel icon={GraduationCap} label="Instructor" /></th>
               <th className="border-b border-role-border px-3 py-2.5 dark:border-slate-800">
                 <HeaderWithInfo
                   label="Class health calculation"
-                  text="Class Health = clamp(0.40 x Engagement + 0.30 x Attendance + 0.20 x Participation + 10 - Risk Penalty - Bloom Cognitive Skill Penalty - Inactivity Penalty). Risk = min(At-risk x 5, 25); Bloom = min(Bloom levels requiring improvement x 3, 15); Inactive = 12 after 14+ days."
+                  text="Class Health = clamp(0.40 x Engagement + 0.30 x Attendance + 0.20 x Participation + 10 - Risk Penalty - Bloom Mastery Penalty - Inactivity Penalty). Risk = min(At-risk x 5, 25); Bloom = min(Bloom levels below mastery x 3, 15); Inactive = 12 after 14+ days."
                 >
-                  Health
+                  <TableHeaderFilter
+                    label="Health"
+                    value={filter === "all" ? "" : filter}
+                    onChange={(value) => setFilter(value || "all")}
+                    allLabel="All"
+                    options={filters.filter((item) => item.key !== "all").map((item) => ({ value: item.key, label: item.label }))}
+                  />
                 </HeaderWithInfo>
               </th>
               <th className="border-b border-role-border px-3 py-2.5 dark:border-slate-800">
@@ -117,13 +111,13 @@ export function AdminClassMonitoring({ classes = [], compact = false }) {
                   label="Engagement calculation"
                   text="Engagement = 0.35 x Attendance + 0.25 x Participation + 0.25 x Correctness + 0.10 x Response Consistency + 0.05 x Recent Activity."
                 >
-                  Engagement
+                  <HeaderIconLabel icon={Activity} label="Engagement" />
                 </HeaderWithInfo>
               </th>
-              <th className="border-b border-role-border px-3 py-2.5 dark:border-slate-800">At-risk</th>
-{/*               <th className="border-b border-role-border px-3 py-2.5 dark:border-slate-800">Bloom levels requiring improvement</th>
+              <th className="border-b border-role-border px-3 py-2.5 dark:border-slate-800"><HeaderIconLabel icon={AlertTriangle} label="At-risk" /></th>
+{/*               <th className="border-b border-role-border px-3 py-2.5 dark:border-slate-800">Bloom levels below mastery</th>
               <th className="border-b border-role-border px-3 py-2.5 dark:border-slate-800">Trend</th> */}
-              <th className="border-b border-role-border px-3 py-2.5 dark:border-slate-800">Last activity</th>
+              <th className="border-b border-role-border px-3 py-2.5 dark:border-slate-800"><HeaderIconLabel icon={Calendar} label="Last activity" /></th>
           
             </tr>
           </thead>
@@ -149,7 +143,7 @@ export function AdminClassMonitoring({ classes = [], compact = false }) {
                 <td className="border-b border-role-border/80 px-3 py-2.5 dark:border-slate-800">
                   <div className="flex items-center gap-2">
                     <span className="text-base font-black text-slate-950 dark:text-white">{Math.round(row.health_score || 0)}</span>
-                    <Badge className="px-2 py-0.5" tone={statusTone(row.health_status)}>{row.health_status || "Attention"}</Badge>
+                    <StatusIcon status={row.health_status || "Attention"} type="intervention" />
                   </div>
                 </td>
                 <td className="border-b border-role-border/80 px-3 py-2.5 font-black text-slate-800 dark:border-slate-800 dark:text-white">{percent(row.engagement_score)}</td>

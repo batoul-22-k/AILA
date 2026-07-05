@@ -19,7 +19,7 @@ const sizes = {
   sm: "h-8 px-3 text-sm",
   md: "h-10 px-4 text-sm",
   lg: "h-11 px-5 text-sm",
-  icon: "h-9 w-9 p-0 text-sm",
+  icon: "h-10 w-10 p-0 text-sm",
 };
 
 export function Button({ children, className, variant = "primary", size = "md", loading = false, ...props }) {

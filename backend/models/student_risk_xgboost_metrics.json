@@ -1,41 +1,41 @@
 {
-  "accuracy": 0.957,
+  "accuracy": 0.936135,
   "class_distribution": {
-    "high": 2000,
-    "low": 4500,
-    "medium": 3500
+    "high": 35283,
+    "low": 61515,
+    "medium": 56337
   },
   "classification_report": {
-    "accuracy": 0.957,
+    "accuracy": 0.9361347830345773,
     "high": {
-      "f1-score": 0.934487021013597,
-      "precision": 0.9242053789731052,
-      "recall": 0.945,
-      "support": 400.0
+      "f1-score": 0.9548687089715536,
+      "precision": 0.9226906303687062,
+      "recall": 0.989372254499079,
+      "support": 7057.0
     },
     "low": {
-      "f1-score": 0.9816564758198999,
-      "precision": 0.982202447163515,
-      "recall": 0.9811111111111112,
-      "support": 900.0
+      "f1-score": 0.9461346633416459,
+      "precision": 0.968104108190865,
+      "recall": 0.92514020970495,
+      "support": 12303.0
     },
     "macro avg": {
-      "f1-score": 0.9514539625460315,
-      "precision": 0.9500164815445767,
-      "recall": 0.9529894179894179,
-      "support": 2000.0
+      "f1-score": 0.9381132198066595,
+      "precision": 0.9342255132837546,
+      "recall": 0.9431026281526226,
+      "support": 30627.0
     },
     "medium": {
-      "f1-score": 0.9382183908045977,
-      "precision": 0.9436416184971098,
-      "recall": 0.9328571428571428,
-      "support": 700.0
+      "f1-score": 0.9133362871067789,
+      "precision": 0.9118818012916925,
+      "recall": 0.9147954202538386,
+      "support": 11267.0
     },
     "weighted avg": {
-      "f1-score": 0.9570192551032836,
-      "precision": 0.9571067434921913,
-      "recall": 0.957,
-      "support": 2000.0
+      "f1-score": 0.9360813396394227,
+      "precision": 0.9369570926547709,
+      "recall": 0.9361347830345773,
+      "support": 30627.0
     }
   },
   "confusion_matrix": {
@@ -46,65 +46,146 @@
     ],
     "matrix": [
       [
-        883,
-        17,
+        11382,
+        921,
         0
       ],
       [
-        16,
-        653,
-        31
+        375,
+        10307,
+        585
       ],
       [
         0,
-        22,
-        378
+        75,
+        6982
       ]
     ]
   },
   "dataset_distribution": {
-    "synthetic_student_risk": 10000
+    "kdd_cup_2015": 120542,
+    "oulad": 32593
+  },
+  "feature_distributions": {
+    "attendance_rate": {
+      "max": 100.0,
+      "mean": 66.5461,
+      "median": 100.0,
+      "min": 0.0,
+      "p25": 28.5714,
+      "p75": 100.0
+    },
+    "consistency_score": {
+      "max": 100.0,
+      "mean": 88.9019,
+      "median": 100.0,
+      "min": 0.0,
+      "p25": 100.0,
+      "p75": 100.0
+    },
+    "correctness_rate": {
+      "max": 100.0,
+      "mean": 51.6152,
+      "median": 32.9192,
+      "min": 0.0,
+      "p25": 32.9192,
+      "p75": 77.748
+    },
+    "engagement_score": {
+      "max": 100.0,
+      "mean": 63.0066,
+      "median": 64.6119,
+      "min": 0.0,
+      "p25": 55.5676,
+      "p75": 74.2854
+    },
+    "participation_rate": {
+      "max": 100.0,
+      "mean": 48.9088,
+      "median": 48.8178,
+      "min": 0.0,
+      "p25": 22.9202,
+      "p75": 74.479
+    },
+    "recent_activity_count": {
+      "max": 3733.0,
+      "mean": 28.4245,
+      "median": 10.0,
+      "min": 0.0,
+      "p25": 3.0,
+      "p75": 31.0
+    },
+    "response_time": {
+      "max": 160.0,
+      "mean": 76.4221,
+      "median": 78.34,
+      "min": 15.0,
+      "p25": 52.03,
+      "p75": 95.92
+    },
+    "semantic_score": {
+      "max": 100.0,
+      "mean": 56.0222,
+      "median": 45.6283,
+      "min": 0.0,
+      "p25": 38.2307,
+      "p75": 78.972
+    },
+    "weak_concepts_count": {
+      "max": 8.0,
+      "mean": 4.8623,
+      "median": 6.0,
+      "min": 0.0,
+      "p25": 3.0,
+      "p75": 7.0
+    }
   },
   "feature_importance": [
     {
-      "feature": "engagement_score",
-      "importance": 0.581172
-    },
-    {
-      "feature": "recent_activity_count",
-      "importance": 0.119077
+      "feature": "response_time",
+      "importance": 0.593144
     },
     {
       "feature": "weak_concepts_count",
-      "importance": 0.06845
+      "importance": 0.159799
     },
     {
-      "feature": "attendance_rate",
-      "importance": 0.056651
+      "feature": "engagement_score",
+      "importance": 0.075824
     },
     {
       "feature": "correctness_rate",
-      "importance": 0.049668
-    },
-    {
-      "feature": "consistency_score",
-      "importance": 0.04711
-    },
-    {
-      "feature": "response_time",
-      "importance": 0.040619
+      "importance": 0.059281
     },
     {
       "feature": "participation_rate",
-      "importance": 0.022253
+      "importance": 0.040789
+    },
+    {
+      "feature": "attendance_rate",
+      "importance": 0.029896
     },
     {
       "feature": "semantic_score",
-      "importance": 0.015
+      "importance": 0.026028
+    },
+    {
+      "feature": "consistency_score",
+      "importance": 0.009982
+    },
+    {
+      "feature": "recent_activity_count",
+      "importance": 0.005257
     }
   ],
-  "macro_f1": 0.951454,
-  "test_rows": 2000,
-  "train_rows": 8000,
-  "weighted_f1": 0.957019
+  "macro_f1": 0.938113,
+  "predicted_class_distribution": {
+    "high": 7567,
+    "low": 11757,
+    "medium": 11303
+  },
+  "test_rows": 30627,
+  "train_rows": 122508,
+  "training_balance_strategy": "Outcome-aware OULAD/KDD relabeling plus balanced sample weights",
+  "weighted_f1": 0.936081
 }

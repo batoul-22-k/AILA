@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Area, AreaChart, Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { getAtRiskStudents, getClassAnalytics, getInstructorDashboard, listClasses, recalculateClassAnalytics } from "../../api/client";
+import { getClassAnalytics, getClassPredictionSummary, getInstructorDashboard, listClasses, recalculateClassAnalytics } from "../../api/client";
 import { Button } from "../../components/Button";
 import { ChartCard } from "../../components/ChartCard";
 import { CardSkeleton, ChartSkeleton } from "../../components/LoadingSkeleton";
@@ -42,11 +42,11 @@ export function InstructorDashboardPage() {
     const dashboardSummary = await getInstructorDashboard().catch(() => null);
     const classResult = await listClasses().catch(() => []);
     const analyticsResult = await Promise.all(classResult.map((classDoc) => getClassAnalytics(classDoc.class_id).catch(() => ({ class_id: classDoc.class_id }))));
-    const atRiskResult = await getAtRiskStudents().catch(() => []);
+    const predictionSummaries = await Promise.all(classResult.map((classDoc) => getClassPredictionSummary(classDoc.class_id).catch(() => ({ at_risk_students: [] }))));
     setSummary(dashboardSummary);
     setClasses(classResult);
     setAnalyticsSummaries(analyticsResult);
-    setAtRiskStudents(atRiskResult.filter((student) => classResult.some((classDoc) => classDoc.class_id === student.class_id)));
+    setAtRiskStudents(predictionSummaries.flatMap((row) => row.at_risk_students || []));
     setLoadingDashboard(false);
   }
 

@@ -18,11 +18,13 @@ import { applyInstitutionSync, createManualAccount, deleteUser, listUsers, previ
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { DashboardCard } from "../../components/DashboardCard";
+import { IconButton } from "../../components/IconButton";
 import { Input } from "../../components/Input";
 import { Modal } from "../../components/Modal";
 import { PageHeader } from "../../components/PageHeader";
 import { ResponsiveTable } from "../../components/ResponsiveTable";
 import { StatCard } from "../../components/StatCard";
+import { TableHeaderFilter, TableToolbar } from "../../components/table";
 import { useToast } from "../../components/ToastProvider";
 
 const accountRoles = [
@@ -392,30 +394,21 @@ export function AdminAccountsPage() {
               </div>
             </div>
 
-            <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-center">
-              <Input
-                label="Search preview"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search name, email, or institution ID"
-              />
-              <div className="flex flex-wrap gap-2 lg:pt-6">
-                {previewFilters.map((filter) => (
-                  <button
-                    key={filter.value}
-                    type="button"
-                    onClick={() => setPreviewFilter(filter.value)}
-                    className={`focus-ring rounded-full border px-3 py-2 text-sm font-black transition ${
-                      previewFilter === filter.value
-                        ? "border-role-primary bg-role-soft text-role-primary"
-                        : "border-role-border bg-white text-slate-600 hover:border-role-primary dark:bg-slate-900 dark:text-slate-200"
-                    }`}
-                  >
-                    {filter.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <TableToolbar
+              search={search}
+              onSearchChange={setSearch}
+              searchPlaceholder="Search name, email, or institution ID"
+              filters={[{
+                key: "role-status",
+                label: "Role/status",
+                valueLabel: previewFilters.find((filter) => filter.value === previewFilter && filter.value !== "all")?.label,
+                onClear: () => setPreviewFilter("all"),
+              }]}
+              onClearFilters={() => {
+                setSearch("");
+                setPreviewFilter("all");
+              }}
+            />
 
             <div className="flex flex-col gap-3 rounded-[18px] border border-role-border bg-role-hover/70 p-4 dark:border-slate-800 dark:bg-slate-950/30 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-sm text-slate-600 dark:text-slate-300">
@@ -436,7 +429,15 @@ export function AdminAccountsPage() {
                     </th>
                     <th className="px-4 py-2.5 font-semibold">Full name</th>
                     <th className="px-4 py-2.5 font-semibold">Email</th>
-                    <th className="px-4 py-2.5 font-semibold">Role</th>
+                    <th className="px-4 py-2.5 font-semibold">
+                      <TableHeaderFilter
+                        label="Role"
+                        value={previewFilter === "all" ? "" : previewFilter}
+                        onChange={(value) => setPreviewFilter(value || "all")}
+                        allLabel="All"
+                        options={previewFilters.filter((filter) => filter.value !== "all")}
+                      />
+                    </th>
                     <th className="px-4 py-2.5 font-semibold">Institution ID</th>
                     <th className="px-4 py-2.5 font-semibold">Department/Class</th>
                     <th className="px-4 py-2.5 font-semibold">Sync status</th>
@@ -567,9 +568,7 @@ export function AdminAccountsPage() {
                 key: "actions",
                 label: "Actions",
                 render: (user) => (
-                  <Button type="button" variant="outline" size="sm" className="text-red-600 hover:border-red-300 hover:text-red-700" onClick={() => openDeleteModal(user)}>
-                    <Trash2 size={15} />
-                  </Button>
+                  <IconButton label="Delete account" icon={Trash2} tone="danger" onClick={() => openDeleteModal(user)} />
                 ),
               },
             ]}

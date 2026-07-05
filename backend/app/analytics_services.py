@@ -486,8 +486,18 @@ async def get_class_analytics_summary(db: AsyncIOMotorDatabase, class_id: str) -
     }
 
 
-async def get_at_risk_students(db: AsyncIOMotorDatabase, class_id: str | None = None, include_all: bool = False) -> list[dict]:
-    class_query = {"class_id": class_id} if class_id else {}
+async def get_at_risk_students(
+    db: AsyncIOMotorDatabase,
+    class_id: str | None = None,
+    include_all: bool = False,
+    class_ids: list[str] | None = None,
+) -> list[dict]:
+    if class_id:
+        class_query = {"class_id": class_id}
+    elif class_ids is not None:
+        class_query = {"class_id": {"$in": class_ids}}
+    else:
+        class_query = {}
     class_rows = await db[MongoCollections.classes].find(class_query).to_list(length=None)
     classes_by_id = {row["class_id"]: serialize_document(row) for row in class_rows if row.get("class_id")}
     class_ids = list(classes_by_id)

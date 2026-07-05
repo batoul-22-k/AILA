@@ -1,14 +1,15 @@
-import { AlertTriangle, Building2, CheckCircle2, Eye, FilterX, Flag, MessageSquare, Minus, Search, TrendingDown, TrendingUp } from "lucide-react";
+import { AlertTriangle, Building2, CheckCircle2, Eye, Flag, MessageSquare, Minus, TrendingDown, TrendingUp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { getAdminClassesMonitoring, getAtRiskStudents } from "../../api/client";
+import { getAdminCommandCenter } from "../../api/client";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { DashboardCard } from "../../components/DashboardCard";
 import { TableSkeleton } from "../../components/LoadingSkeleton";
 import { Modal } from "../../components/Modal";
 import { PageHeader } from "../../components/PageHeader";
+import { TableHeaderFilter, TableToolbar } from "../../components/table";
 
 function percent(value) {
   return `${Math.round(Number(value || 0))}%`;
@@ -26,8 +27,9 @@ function riskTone(level) {
 }
 
 function activityLabel(row) {
-  if (!row.last_active_at || Number(row.recent_activity_score || 0) < 50) return "Inactive";
-  if (Number(row.recent_activity_score || 0) < 70) return "Recently active";
+  const recentActivity = Number(row.recent_activity_score ?? row.features?.recent_activity_count ?? row.features?.activity_last_7_days ?? 0);
+  if (!row.last_active_at && !row.generated_at && recentActivity <= 0) return "Inactive";
+  if (recentActivity < 3) return "Recently active";
   return "Active";
 }
 
@@ -38,6 +40,13 @@ function formatDate(value) {
 
 function classNameFor(row) {
   return row.class_name || row.class_id || "Unassigned";
+}
+
+function firstInstructorName(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 export function AtRiskPage() {
@@ -59,12 +68,9 @@ export function AtRiskPage() {
       setLoading(true);
       setError("");
       try {
-        const [studentRows, monitoringResult] = await Promise.all([
-          getAtRiskStudents({ include_all: true }),
-          getAdminClassesMonitoring().catch(() => ({ classes: [] })),
-        ]);
-        setStudents(studentRows || []);
-        setClassMonitoring(monitoringResult.classes || []);
+        const commandCenter = await getAdminCommandCenter();
+        setStudents(commandCenter?.prediction_overview?.student_reports || []);
+        setClassMonitoring(commandCenter?.classes || []);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not load student roster");
       } finally {
@@ -81,11 +87,19 @@ export function AtRiskPage() {
   const rows = useMemo(() => {
     return students.map((student) => {
       const classInfo = classById.get(student.class_id);
+      const features = student.features || {};
+      const instructorNames = classInfo?.instructor_names?.length ? classInfo.instructor_names : firstInstructorName(student.instructor);
       return {
         ...student,
+        attendance_rate: student.attendance ?? features.attendance_rate ?? 0,
+        participation_rate: student.participation ?? features.participation_rate ?? features.answer_rate ?? 0,
+        correctness_rate: student.correctness ?? features.correctness_rate ?? 0,
+        engagement_score: student.engagement ?? features.engagement_score ?? student.engagement_index ?? 0,
+        last_active_at: student.last_active_at || student.generated_at || student.predicted_at,
+        risk_reason: student.risk_reasons?.[0] || student.explanation?.summary || "",
         risk_bucket: riskBucket(student.risk_level),
         activity_status: activityLabel(student),
-        instructor_names: classInfo?.instructor_names || [],
+        instructor_names: instructorNames,
       };
     });
   }, [classById, students]);
@@ -114,6 +128,16 @@ export function AtRiskPage() {
   const instructorOptions = useMemo(() => {
     return [...new Set(rows.flatMap((row) => row.instructor_names || []))].filter(Boolean).sort();
   }, [rows]);
+
+  const activeFilterChips = useMemo(() => {
+    const classLabel = classOptions.find(([classId]) => classId === filters.classId)?.[1];
+    return [
+      { key: "class", label: "Class", valueLabel: classLabel, onClear: () => updateFilter("classId", "") },
+      { key: "instructor", label: "Instructor", valueLabel: filters.instructor, onClear: () => updateFilter("instructor", "") },
+      { key: "risk", label: "Risk", valueLabel: filters.risk, onClear: () => updateFilter("risk", "") },
+      { key: "activity", label: "Activity", valueLabel: filters.activity, onClear: () => updateFilter("activity", "") },
+    ];
+  }, [classOptions, filters.activity, filters.classId, filters.instructor, filters.risk]);
 
   const stats = useMemo(() => {
     const uniqueStudentIds = new Set(rows.map((row) => row.student_id));
@@ -154,37 +178,13 @@ export function AtRiskPage() {
       </div>
 
       <DashboardCard className="p-3 shadow-none">
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="relative min-w-[16rem] flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
-            <input
-              className="adaptive-input h-9 w-full border bg-white pl-10 pr-3 text-sm font-semibold text-slate-800 placeholder:text-slate-400 dark:bg-slate-950 dark:text-slate-100"
-              value={filters.search}
-              onChange={(event) => updateFilter("search", event.target.value)}
-              placeholder="Search by student name or email"
-            />
-          </label>
-          <Select value={filters.classId} onChange={(value) => updateFilter("classId", value)} label="All classes">
-            {classOptions.map(([classId, className]) => <option key={classId} value={classId}>{className}</option>)}
-          </Select>
-          <Select value={filters.instructor} onChange={(value) => updateFilter("instructor", value)} label="All instructors">
-            {instructorOptions.map((name) => <option key={name} value={name}>{name}</option>)}
-          </Select>
-          <Select value={filters.risk} onChange={(value) => updateFilter("risk", value)} label="All risk levels">
-            <option value="High">High</option>
-            <option value="Medium">Medium</option>
-            <option value="Low">Low</option>
-          </Select>
-          <Select value={filters.activity} onChange={(value) => updateFilter("activity", value)} label="All activity">
-            <option value="Active">Active</option>
-            <option value="Recently active">Recently active</option>
-            <option value="Inactive">Inactive</option>
-          </Select>
-          <Button type="button" variant="outline" size="sm" onClick={clearFilters}>
-            <FilterX size={16} />
-            Clear
-          </Button>
-        </div>
+        <TableToolbar
+          search={filters.search}
+          onSearchChange={(value) => updateFilter("search", value)}
+          searchPlaceholder="Search by student name or email"
+          filters={activeFilterChips}
+          onClearFilters={clearFilters}
+        />
       </DashboardCard>
 
       <DashboardCard className="p-3 shadow-none">
@@ -196,24 +196,65 @@ export function AtRiskPage() {
         </div>
 
         {loading ? (
-          <TableSkeleton className="mt-3" rows={8} columns={6} />
+          <TableSkeleton className="mt-3" rows={8} columns={7} />
         ) : (
         <div className="mt-3 max-h-[68vh] overflow-auto rounded-lg border border-role-border dark:border-slate-800">
-          <table className="min-w-[760px] w-full border-separate border-spacing-0 text-left text-sm">
+          <table className="min-w-[920px] w-full border-separate border-spacing-0 text-left text-sm">
             <thead className="sticky top-0 z-10 bg-role-hover text-xs font-black uppercase tracking-wide text-slate-500 dark:bg-slate-950 dark:text-slate-400">
               <tr>
                 <th className="border-b border-role-border px-3 py-2.5">Student</th>
-                <th className="border-b border-role-border px-3 py-2.5">Class</th>
-                <th className="border-b border-role-border px-3 py-2.5">Risk</th>
+                <th className="border-b border-role-border px-3 py-2.5">
+                  <TableHeaderFilter
+                    label="Class"
+                    value={filters.classId}
+                    onChange={(value) => updateFilter("classId", value)}
+                    allLabel="All classes"
+                    options={classOptions.map(([classId, className]) => ({ value: classId, label: className }))}
+                  />
+                </th>
+                <th className="border-b border-role-border px-3 py-2.5">
+                  <TableHeaderFilter
+                    label="Instructor"
+                    value={filters.instructor}
+                    onChange={(value) => updateFilter("instructor", value)}
+                    allLabel="All instructors"
+                    options={instructorOptions.map((name) => ({ value: name, label: name }))}
+                  />
+                </th>
+                <th className="border-b border-role-border px-3 py-2.5">
+                  <TableHeaderFilter
+                    label="Risk"
+                    value={filters.risk}
+                    onChange={(value) => updateFilter("risk", value)}
+                    allLabel="All risk"
+                    options={[
+                      { value: "High", label: "High" },
+                      { value: "Medium", label: "Medium" },
+                      { value: "Low", label: "Low" },
+                    ]}
+                  />
+                </th>
                 <th className="border-b border-role-border px-3 py-2.5">Engagement</th>
-                <th className="border-b border-role-border px-3 py-2.5">Last Activity</th>
+                <th className="border-b border-role-border px-3 py-2.5">
+                  <TableHeaderFilter
+                    label="Activity"
+                    value={filters.activity}
+                    onChange={(value) => updateFilter("activity", value)}
+                    allLabel="All activity"
+                    options={[
+                      { value: "Active", label: "Active" },
+                      { value: "Recently active", label: "Recently active" },
+                      { value: "Inactive", label: "Inactive" },
+                    ]}
+                  />
+                </th>
                 <th className="border-b border-role-border px-3 py-2.5 text-right">View</th>
               </tr>
             </thead>
             <tbody className="bg-white dark:bg-slate-900">
               {filteredRows.length === 0 && (
                 <tr>
-                  <td className="px-3 py-8 text-center text-sm font-semibold text-slate-500" colSpan={6}>No students match these filters.</td>
+                  <td className="px-3 py-8 text-center text-sm font-semibold text-slate-500" colSpan={7}>No students match these filters.</td>
                 </tr>
               )}
               {filteredRows.map((row) => (
@@ -223,6 +264,7 @@ export function AtRiskPage() {
                     <p className="mt-0.5 text-xs font-semibold text-slate-500">{row.email || row.student_id}</p>
                   </td>
                   <td className="border-b border-role-border/80 px-3 py-2 font-semibold text-slate-700 dark:text-slate-200">{classNameFor(row)}</td>
+                  <td className="border-b border-role-border/80 px-3 py-2 font-semibold text-slate-700 dark:text-slate-200">{row.instructor_names?.join(", ") || "Unassigned"}</td>
                   <td className="border-b border-role-border/80 px-3 py-2">
                     <Badge tone={riskTone(row.risk_level)} className="px-2 py-0.5">{row.risk_bucket}</Badge>
                   </td>
@@ -545,18 +587,5 @@ function Kpi({ label, value, tone = "role" }) {
       <p className="text-[11px] font-black uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{value}</p>
     </DashboardCard>
-  );
-}
-
-function Select({ value, onChange, label, children }) {
-  return (
-    <select
-      className="adaptive-input h-9 min-w-[9.5rem] max-w-full flex-1 border bg-white px-3 text-sm font-semibold text-slate-700 dark:bg-slate-950 dark:text-slate-100 sm:flex-none"
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-    >
-      <option value="">{label}</option>
-      {children}
-    </select>
   );
 }

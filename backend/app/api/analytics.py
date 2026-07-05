@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.auth import get_current_user, require_admin
+from app.auth import account_role_for_user, get_current_user, require_account_class_role, require_admin, require_any_class_role
 from app.analytics_services import (
     get_at_risk_students,
     get_class_analytics_summary,
@@ -55,8 +55,17 @@ async def get_at_risk_student_details(
     class_id: str | None = None,
     include_all: bool = False,
     db: AsyncIOMotorDatabase = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ) -> list[AtRiskStudentOut]:
-    rows = await get_at_risk_students(db, class_id=class_id, include_all=include_all)
+    if account_role_for_user(user) == "admin":
+        rows = await get_at_risk_students(db, class_id=class_id, include_all=include_all)
+    else:
+        if class_id:
+            await require_account_class_role(db, user, class_id, "instructor")
+            rows = await get_at_risk_students(db, class_id=class_id, include_all=include_all)
+        else:
+            class_ids = await require_any_class_role(db, user, "instructor")
+            rows = await get_at_risk_students(db, include_all=include_all, class_ids=class_ids)
     return [AtRiskStudentOut(**row) for row in rows]
 
 

@@ -10,6 +10,19 @@ from app.ml.feature_schema import PREDICTION_FEATURE_COLUMNS, RISK_LABEL_TO_ID
 DATASET_SOURCE_COLUMN = "dataset_source"
 LABEL_COLUMN = "risk_label"
 LABEL_ID_COLUMN = "risk_label_id"
+COMMON_EDUCATIONAL_FEATURE_COLUMNS = [
+    "attendance_rate",
+    "participation_rate",
+    "correctness_rate",
+    "engagement_score",
+    "consistency_score",
+    "recent_activity_count",
+]
+DETERMINISTIC_FEATURE_COLUMNS = [
+    "semantic_score",
+    "response_time",
+    "weak_concepts_count",
+]
 
 
 @dataclass(frozen=True)
@@ -70,6 +83,50 @@ def engagement_score(frame):
     )
 
 
+def fill_deterministic_educational_features(frame):
+    clean = frame.copy()
+    for column in COMMON_EDUCATIONAL_FEATURE_COLUMNS:
+        if column not in clean:
+            clean[column] = 0.0
+        clean[column] = pd_to_numeric(clean[column])
+
+    generated_semantic = clamp_series(
+        (0.72 * clean["correctness_rate"])
+        + (0.18 * clean["participation_rate"])
+        + (0.10 * clean["consistency_score"])
+    )
+    generated_response_time = (
+        15
+        + (0.85 * (100 - clamp_series(clean["engagement_score"])))
+        + (0.35 * (100 - clamp_series(clean["participation_rate"])))
+        + (0.25 * (100 - clamp_series(clean["correctness_rate"])))
+    ).clip(lower=5, upper=180).round(2)
+    generated_weak_concepts = (
+        ((100 - clamp_series(clean["correctness_rate"])) / 24)
+        + ((100 - generated_semantic) / 28)
+        + ((100 - clamp_series(clean["consistency_score"])) / 38)
+        + ((100 - clamp_series(clean["participation_rate"])) / 42)
+    ).round().clip(lower=0, upper=8)
+
+    generated = {
+        "semantic_score": generated_semantic,
+        "response_time": generated_response_time,
+        "weak_concepts_count": generated_weak_concepts,
+    }
+    for column, values in generated.items():
+        if column not in clean:
+            clean[column] = values
+            continue
+        clean[column] = pd_to_numeric(clean[column])
+        clean[column] = clean[column].where(clean[column].notna(), values)
+    return clean
+
+
+def pd_to_numeric(series):
+    pd = require_pandas()
+    return pd.to_numeric(series, errors="coerce")
+
+
 def label_id(label: str) -> int:
     clean = str(label).strip().lower().replace(" risk", "")
     if clean not in RISK_LABEL_TO_ID:
@@ -80,11 +137,26 @@ def label_id(label: str) -> int:
 def finalize_training_frame(frame, source: str):
     pd = require_pandas()
     clean = frame.copy()
-    for column in PREDICTION_FEATURE_COLUMNS:
+    for column in COMMON_EDUCATIONAL_FEATURE_COLUMNS:
         if column not in clean:
             clean[column] = 0.0
         clean[column] = pd.to_numeric(clean[column], errors="coerce").fillna(0.0)
     clean["engagement_score"] = engagement_score(clean)
+    clean = fill_deterministic_educational_features(clean)
+    for column in PREDICTION_FEATURE_COLUMNS:
+        clean[column] = pd.to_numeric(clean[column], errors="coerce").fillna(0.0)
+    for column in [
+        "attendance_rate",
+        "participation_rate",
+        "correctness_rate",
+        "semantic_score",
+        "engagement_score",
+        "consistency_score",
+    ]:
+        clean[column] = clamp_series(clean[column])
+    clean["response_time"] = clean["response_time"].clip(lower=0, upper=180).round(4)
+    clean["recent_activity_count"] = clean["recent_activity_count"].clip(lower=0).round(4)
+    clean["weak_concepts_count"] = clean["weak_concepts_count"].clip(lower=0, upper=8).round(4)
     clean[LABEL_COLUMN] = clean[LABEL_COLUMN].map(lambda value: str(value).strip().lower().replace(" risk", ""))
     clean = clean[clean[LABEL_COLUMN].isin(RISK_LABEL_TO_ID)]
     clean[LABEL_ID_COLUMN] = clean[LABEL_COLUMN].map(label_id).astype(int)

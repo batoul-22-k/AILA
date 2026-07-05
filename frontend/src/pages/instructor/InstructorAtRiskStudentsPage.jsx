@@ -1,922 +1,908 @@
-import { AlertCircle, CheckCircle2, ChevronDown, Info, RefreshCw, School } from "lucide-react";
-import { Fragment, useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  AlertTriangle,
+  ArrowDownRight,
+  ArrowRight,
+  ArrowUpRight,
+  BrainCircuit,
+  CheckCircle2,
+  Eye,
+  Info,
+  Minus,
+  RefreshCw,
+  Target,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
-import { getAtRiskStudents, listClasses, recalculateClassAnalytics } from "../../api/client";
+import { getClassPredictionSummary, listClasses, runPredictionAnalysis } from "../../api/client";
+import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { DashboardCard } from "../../components/DashboardCard";
 import { EmptyState } from "../../components/EmptyState";
+import { Modal } from "../../components/Modal";
 import { PageHeader } from "../../components/PageHeader";
-import { average } from "../../utils/analytics";
+import { TableHeaderFilter, TableToolbar } from "../../components/table";
+import { cn } from "../../utils/cn";
 
-const riskLevels = ["Critical", "High", "Medium", "Low"];
-const activityFilters = ["All", "Today", "Last 7 days", "Last 30 days", "Inactive"];
-const defaultColumnFilters = {
-  attendance: "All",
-  correctness: "All",
-  engagement: "All",
-  risk: "All",
-  lastActive: "All",
+const riskOrder = { high: 3, medium: 2, low: 1 };
+const BLOOM_MASTERY_THRESHOLD = 60;
+const BLOOM_GAP_TOOLTIP = "Only Bloom levels with answered questions are evaluated. Untested levels are not counted as mastery gaps.";
+const bloomLevelOrder = ["remember", "understand", "apply", "analyze", "evaluate", "create"];
+const bloomLevelLabels = {
+  remember: "Remember",
+  understand: "Understand",
+  apply: "Apply",
+  analyze: "Analyze",
+  evaluate: "Evaluate",
+  create: "Create",
+};
+const trendFilterLabels = {
+  worsened: "Worsened",
+  improved: "Improved",
+  stable: "Stable",
+  initial: "Initial Prediction",
+};
+const factorDisplayLabels = {
+  Attendance: "Low attendance",
+  "Attendance Rate": "Low attendance",
+  Participation: "Low participation",
+  "Participation Rate": "Low participation",
+  "Answer Rate": "Low participation",
+  Correctness: "Low correctness",
+  "Correctness Rate": "Low correctness",
+  "Semantic Score": "Weak short-answer quality",
+  Engagement: "Low engagement",
+  "Engagement Score": "Low engagement",
+  "Engagement Trend": "Declining engagement",
+  Consistency: "Inconsistent activity",
+  "Consistency Score": "Inconsistent activity",
+  "Response Time": "Slow response behavior",
+  "Recent Activity": "Recent inactivity",
+  "Recent Activity Count": "Recent inactivity",
+  "Weak Concepts": "Weak Bloom mastery",
+  "Weak Concepts Count": "Multiple weak concepts",
+  "Bloom Mastery Gaps": "Weak Bloom mastery",
 };
 
-const metricFilterOptions = ["All", "Low", "Medium", "High"];
-const perfectMetricLabels = new Set(["Attendance", "Correctness", "Participation", "Engagement", "Response consistency"]);
-
-function clampPercent(value) {
-  const numeric = Number(value || 0);
-  if (!Number.isFinite(numeric)) return 0;
-  return Math.max(0, Math.min(100, Math.round(numeric)));
+function riskTone(level) {
+  if (String(level).toLowerCase() === "high") return "red";
+  if (String(level).toLowerCase() === "medium") return "gold";
+  return "green";
 }
 
-function parsePercentValue(value) {
-  const numeric = typeof value === "string" ? Number.parseFloat(value) : Number(value);
-  return Number.isFinite(numeric) ? clampPercent(numeric) : null;
+function riskLabel(level) {
+  const clean = String(level || "low").toLowerCase();
+  if (clean === "high") return "High";
+  if (clean === "medium") return "Medium";
+  return "Low";
 }
 
-function SuccessMetric({ className = "text-sm", iconSize = 15 }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 font-semibold text-emerald-700 dark:text-emerald-100 ${className}`}
-      title="Perfect score"
-      aria-label="100%. Perfect score"
-    >
-      <CheckCircle2 size={iconSize} className="text-emerald-500 dark:text-emerald-300" />
-      <span>100%</span>
-    </span>
-  );
+function riskBadgeLabel(level) {
+  return `${riskLabel(level)} Risk`;
 }
 
-function ZeroMetric({ className = "text-sm", iconSize = 15 }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 font-semibold text-red-700 dark:text-red-100 ${className}`}
-      title="No activity recorded"
-      aria-label="0%. No activity recorded"
-    >
-      <AlertCircle size={iconSize} className="text-red-400 dark:text-red-300" />
-      <span>0%</span>
-    </span>
-  );
+function probabilityPercent(value, fallback = "-") {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return `${Math.round(numeric > 0 && numeric <= 1 ? numeric * 100 : numeric)}%`;
 }
 
-export function calculateEngagementScore({ attendance, participation, correctness, consistency, recentActivity }) {
-  return clampPercent(
-    (0.35 * clampPercent(attendance))
-    + (0.25 * clampPercent(participation))
-    + (0.25 * clampPercent(correctness))
-    + (0.10 * clampPercent(consistency))
-    + (0.05 * clampPercent(recentActivity)),
-  );
+function signalPercent(value, fallback = "Pending") {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return `${Math.round(numeric > 0 && numeric <= 1 ? numeric * 100 : numeric)}%`;
 }
 
-export function calculateRiskScore(learningHealthScore) {
-  return clampPercent(100 - clampPercent(learningHealthScore));
-}
-
-export function getRiskLevel(riskScore) {
-  const score = clampPercent(riskScore);
-  if (score <= 30) return "Low";
-  if (score <= 60) return "Medium";
-  if (score <= 80) return "High";
-  return "Critical";
-}
-
-export function getRiskReason(student) {
-  if (student.engagement >= 70) return "Stable";
-  const previous = student.previousEngagement ?? student.weekly_history?.at?.(-2)?.engagement_score;
-  if (Number.isFinite(Number(previous)) && student.engagement <= Number(previous) - 10) return "Declining trend";
-  if (student.attendance < 50) return "Low attendance";
-  if (student.correctness < 60) return "Weak correctness";
-  if (student.recentActivity < 50) return "Inactive recently";
-  if (student.participation < 60 || student.consistency < 60) return "Low engagement";
-  return "Low engagement";
-}
-
-export function getRiskBadgeClass(level) {
-  if (level === "Critical") return "bg-red-100 text-red-700 dark:bg-red-400/15 dark:text-red-100";
-  if (level === "High") return "bg-orange-100 text-orange-800 dark:bg-orange-400/15 dark:text-orange-100";
-  if (level === "Medium") return "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-100";
-  return "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-100";
-}
-
-function formatLastActive(value) {
-  if (!value) return "No activity";
+function shortDate(value) {
+  if (!value) return "Pending";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "No activity";
+  if (Number.isNaN(date.getTime())) return "Pending";
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-function getTimeValue(value) {
-  if (!value) return 0;
-  const time = new Date(value).getTime();
-  return Number.isFinite(time) ? time : 0;
+function titleCase(value) {
+  return String(value || "")
+    .replaceAll("_", " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`)
+    .join(" ");
 }
 
-function daysSince(value) {
-  const time = getTimeValue(value);
-  if (!time) return Number.POSITIVE_INFINITY;
-  return Math.floor((Date.now() - time) / 86400000);
+function normalizedFactorName(value) {
+  return titleCase(value?.factor || value?.feature || value?.name || value?.label || value);
 }
 
-function normalizeStudent(student) {
-  const attendance = clampPercent(student.attendance_rate);
-  const participation = clampPercent(student.participation_rate);
-  const correctness = clampPercent(student.correctness_rate);
-  const consistency = clampPercent(student.consistency_rate);
-  const recentActivity = clampPercent(student.recent_activity_score);
-  const engagement = clampPercent(student.engagement_score)
-    || calculateEngagementScore({ attendance, participation, correctness, consistency, recentActivity });
-  const riskScore = clampPercent(student.risk_score) || calculateRiskScore(engagement);
-  const normalized = {
-    ...student,
-    id: `${student.class_id}:${student.student_id}`,
-    attendance,
-    participation,
-    correctness,
-    consistency,
-    recentActivity,
-    engagement,
-    riskScore,
-    risk_level: student.risk_level || getRiskLevel(riskScore),
-    lastActive: student.last_active_at,
-  };
-  return {
-    ...normalized,
-    risk_reason: getRiskReason(normalized),
-  };
+function factorLabel(value) {
+  const label = normalizedFactorName(value);
+  return factorDisplayLabels[label] || label;
 }
 
-function latestDateValue(values) {
-  return values
-    .map((value) => (value ? new Date(value).getTime() : 0))
-    .filter((value) => Number.isFinite(value))
-    .reduce((latest, value) => Math.max(latest, value), 0);
+function factorImpact(value) {
+  const numeric = Number(value?.impact ?? value?.importance ?? value?.weight);
+  return Number.isFinite(numeric) ? Math.abs(numeric) : null;
 }
 
-export function aggregateStudentMetricsAcrossClasses(records) {
-  const normalizedRecords = records.map(normalizeStudent);
-  const byStudent = new Map();
-  for (const record of normalizedRecords) {
-    const group = byStudent.get(record.student_id) || [];
-    group.push(record);
-    byStudent.set(record.student_id, group);
-  }
+function bloomLabel(value) {
+  const clean = String(value || "").trim().toLowerCase();
+  return bloomLevelLabels[clean] || titleCase(value);
+}
 
-  return [...byStudent.values()].map((studentRecords) => {
-    const first = studentRecords[0];
-    const attendance = average(studentRecords.map((student) => student.attendance));
-    const participation = average(studentRecords.map((student) => student.participation));
-    const correctness = average(studentRecords.map((student) => student.correctness));
-    const consistency = average(studentRecords.map((student) => student.consistency));
-    const recentActivity = average(studentRecords.map((student) => student.recentActivity));
-    const engagement = average(studentRecords.map((student) => student.engagement));
-    const riskScore = calculateRiskScore(engagement);
-    const lastActiveTime = latestDateValue(studentRecords.map((student) => student.lastActive));
-    const previousEngagement = average(
-      studentRecords
-        .map((student) => student.weekly_history?.at?.(-2)?.engagement_score)
-        .filter((value) => Number.isFinite(Number(value))),
+function bloomRank(value) {
+  const index = bloomLevelOrder.indexOf(String(value || "").trim().toLowerCase());
+  return index === -1 ? bloomLevelOrder.length : index;
+}
+
+function bloomKey(value) {
+  const clean = String(value || "").trim().toLowerCase();
+  const labelMatch = Object.entries(bloomLevelLabels).find(([, label]) => label.toLowerCase() === clean);
+  return labelMatch?.[0] || clean;
+}
+
+function mapValueForBloomLevel(map, levelKey) {
+  if (!map || typeof map !== "object") return null;
+  const label = bloomLevelLabels[levelKey];
+  if (map[levelKey] !== undefined) return map[levelKey];
+  if (map[label] !== undefined) return map[label];
+  const entry = Object.entries(map).find(([key]) => bloomKey(key) === levelKey);
+  return entry ? entry[1] : null;
+}
+
+function numberOrNull(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function masteryPercent(value) {
+  const numeric = numberOrNull(value);
+  if (numeric === null) return null;
+  return numeric > 0 && numeric <= 1 ? numeric * 100 : numeric;
+}
+
+function signalPercentNumber(value) {
+  const numeric = numberOrNull(value);
+  if (numeric === null) return null;
+  return numeric > 0 && numeric <= 1 ? numeric * 100 : numeric;
+}
+
+function rawSignalNumber(value) {
+  const numeric = numberOrNull(value);
+  return numeric === null ? null : numeric;
+}
+
+function bloomMasteryRowsForPrediction(prediction) {
+  const features = prediction?.features || {};
+  const source = prediction?.bloom_mastery_by_level || features.bloom_mastery_by_level || {};
+  const sourceRows = Array.isArray(source) ? source : Object.values(source || {});
+  const answerCounts = features.concept_answer_counts || {};
+  const correctCounts = features.concept_correct_answer_counts || {};
+  const correctnessMap = features.concept_correctness_map || {};
+
+  return bloomLevelOrder.map((levelKey) => {
+    const row = sourceRows.find((item) => bloomKey(item?.bloom_level || item?.level || item?.concept) === levelKey) || {};
+    const attemptedValue = numberOrNull(
+      row.attempted_count
+      ?? row.questions_answered
+      ?? mapValueForBloomLevel(answerCounts, levelKey),
     );
-    const overall = {
-      ...first,
-      id: `overall:${first.student_id}`,
-      class_id: "all",
-      class_name: "All Classes",
-      classesCount: new Set(studentRecords.map((student) => student.class_id)).size,
-      classNames: [...new Set(studentRecords.map((student) => student.class_name).filter(Boolean))],
-      attendance,
-      participation,
-      correctness,
-      consistency,
-      recentActivity,
-      engagement,
-      riskScore,
-      risk_level: getRiskLevel(riskScore),
-      isOverallProfile: true,
-      lastActive: lastActiveTime ? new Date(lastActiveTime).toISOString() : null,
-      sessions_attended: studentRecords.reduce((sum, student) => sum + Number(student.sessions_attended || 0), 0),
-      total_sessions: studentRecords.reduce((sum, student) => sum + Number(student.total_sessions || 0), 0),
-      questions_answered: studentRecords.reduce((sum, student) => sum + Number(student.questions_answered || 0), 0),
-      questions_presented: studentRecords.reduce((sum, student) => sum + Number(student.questions_presented || 0), 0),
-      previousEngagement,
-      sourceRecords: studentRecords,
-    };
+    const correctValue = numberOrNull(
+      row.correct_count
+      ?? row.correct_answers
+      ?? mapValueForBloomLevel(correctCounts, levelKey),
+    );
+    const attempted = attemptedValue || 0;
+    const correct = correctValue || 0;
+    const mappedMastery = masteryPercent(mapValueForBloomLevel(correctnessMap, levelKey));
+    const mastery = attempted > 0
+      ? correctValue !== null
+        ? (correct / attempted) * 100
+        : mappedMastery ?? masteryPercent(row.mastery_rate ?? row.average_correctness)
+      : null;
     return {
-      ...overall,
-      risk_reason: getRiskReason(overall),
+      level: levelKey,
+      label: bloomLevelLabels[levelKey],
+      attempted_count: attempted,
+      correct_count: correct,
+      mastery_rate: mastery,
+      is_gap: attempted > 0 && mastery !== null && mastery < BLOOM_MASTERY_THRESHOLD,
     };
   });
 }
 
-function MetricBar({ value, tone = "role" }) {
-  const percent = clampPercent(value);
-  const barClass = {
-    green: "bg-emerald-300",
-    gold: "bg-amber-300",
-    orange: "bg-orange-300",
-    red: "bg-red-300",
-    role: "bg-[#6EADB5]",
-  }[tone];
-  if (percent >= 100) {
-    return (
-      <div className="flex min-w-28 items-center">
-        <SuccessMetric />
-      </div>
-    );
+function bloomGapRowsForPrediction(prediction) {
+  return bloomMasteryRowsForPrediction(prediction).filter((row) => row.is_gap);
+}
+
+function notAssessedBloomRowsForPrediction(prediction) {
+  return bloomMasteryRowsForPrediction(prediction).filter((row) => row.attempted_count <= 0);
+}
+
+function bloomLevelsForPrediction(prediction) {
+  return bloomGapRowsForPrediction(prediction).map((row) => row.label);
+}
+
+function studentSignalValue(prediction, keys) {
+  const features = prediction?.features || {};
+  for (const key of keys) {
+    if (prediction?.[key] !== null && prediction?.[key] !== undefined && prediction?.[key] !== "") return prediction[key];
+    if (features[key] !== null && features[key] !== undefined && features[key] !== "") return features[key];
   }
-  if (percent <= 0) {
-    return (
-      <div className="flex min-w-28 items-center">
-        <ZeroMetric />
-      </div>
-    );
+  return null;
+}
+
+function hasRiskLevel(value) {
+  return ["low", "medium", "high"].includes(String(value?.risk_level || value?.riskLevel || "").toLowerCase());
+}
+
+function predictionDate(prediction) {
+  return prediction?.generated_at || prediction?.predicted_at || prediction?.last_prediction || prediction?.prediction_timestamp;
+}
+
+function riskScore(prediction) {
+  const numeric = Number(prediction?.risk_score ?? prediction?.riskScore ?? prediction?.risk_probability);
+  if (!Number.isFinite(numeric)) return null;
+  return numeric > 0 && numeric <= 1 ? numeric * 100 : numeric;
+}
+
+function predictionHistoryRows(row, summary) {
+  const directArrays = [row?.prediction_history, row?.history, row?.previous_predictions].filter(Array.isArray);
+  const summaryHistory = Array.isArray(summary?.prediction_history)
+    ? summary.prediction_history.filter((item) => item.student_id === row.student_id && (!item.class_id || item.class_id === (row.class_id || summary.class_id)))
+    : [];
+  return [...directArrays.flat(), ...summaryHistory].filter(hasRiskLevel);
+}
+
+function previousPredictionFor(row, summary) {
+  const objectCandidates = [
+    row?.previous_prediction,
+    row?.previousPrediction,
+    row?.previous,
+    row?.previous_result,
+    row?.prior_prediction,
+    row?.priorPrediction,
+  ].filter(hasRiskLevel);
+  if (objectCandidates.length) return objectCandidates[0];
+
+  const previousLevel = row?.previous_risk_level ?? row?.previousRiskLevel ?? row?.prior_risk_level;
+  if (previousLevel) {
+    return {
+      risk_level: previousLevel,
+      risk_score: row?.previous_risk_score ?? row?.previousRiskScore ?? row?.prior_risk_score,
+      generated_at: row?.previous_generated_at ?? row?.previous_predicted_at ?? row?.prior_generated_at,
+      confidence: row?.previous_confidence ?? row?.previous_model_confidence,
+    };
   }
+
+  const currentDate = new Date(predictionDate(row) || summary?.generated_at || 0).getTime();
+  const rows = predictionHistoryRows(row, summary)
+    .filter((item) => item.prediction_id !== row.prediction_id)
+    .sort((first, second) => new Date(predictionDate(second) || 0).getTime() - new Date(predictionDate(first) || 0).getTime());
+
+  if (!rows.length) return null;
+  if (!Number.isFinite(currentDate) || currentDate <= 0) return rows[0];
+  return rows.find((item) => {
+    const itemDate = new Date(predictionDate(item) || 0).getTime();
+    return Number.isFinite(itemDate) && itemDate < currentDate;
+  }) || null;
+}
+
+function trendForPrediction(prediction) {
+  const serverTrend = prediction.prediction_trend;
+  const previous = prediction.previous_prediction;
+  if (serverTrend?.status === "initial" || !hasRiskLevel(previous)) {
+    return {
+      kind: "initial",
+      label: "Initial Prediction",
+      tone: "slate",
+      Icon: ArrowRight,
+      title: `Current prediction: ${riskBadgeLabel(prediction.risk_level)} (${shortDate(prediction.last_prediction)})`,
+    };
+  }
+
+  const previousRisk = String(previous.risk_level || previous.riskLevel || "").toLowerCase();
+  const currentRisk = String(prediction.risk_level || "").toLowerCase();
+  const delta = (riskOrder[currentRisk] || 0) - (riskOrder[previousRisk] || 0);
+  const previousScore = riskScore(previous);
+  const currentScore = riskScore(prediction);
+  const serverScoreDelta = Number(serverTrend?.risk_score_difference);
+  const scoreDelta = Number.isFinite(serverScoreDelta)
+    ? serverScoreDelta
+    : previousScore !== null && currentScore !== null
+      ? currentScore - previousScore
+      : null;
+  const scoreLine = scoreDelta === null ? "Risk score difference unavailable" : `Risk score ${scoreDelta >= 0 ? "+" : ""}${Math.round(scoreDelta)} pts`;
+  const confidence = probabilityPercent(prediction.confidence ?? prediction.model_confidence, "Pending");
+  const previousDate = serverTrend?.previous_prediction_date || predictionDate(previous);
+  const currentDate = serverTrend?.current_prediction_date || prediction.last_prediction;
+  const statusLabel = delta > 0 ? "Worsened" : delta < 0 ? "Improved" : "Stable";
+  const title = `${riskLabel(previousRisk)} (${shortDate(previousDate)})\n${statusLabel}\n${riskLabel(currentRisk)} (${shortDate(currentDate)})\n${scoreLine}\nConfidence ${confidence}`;
+
+  if (delta > 0) {
+    return {
+      kind: "worsened",
+      label: "Worsened",
+      tone: "red",
+      Icon: ArrowUpRight,
+      title,
+    };
+  }
+  if (delta < 0) {
+    return {
+      kind: "improved",
+      label: "Improved",
+      tone: "green",
+      Icon: ArrowDownRight,
+      title,
+    };
+  }
+  return { kind: "stable", label: "Stable", tone: "slate", Icon: Minus, title };
+}
+
+function predictionSummary(prediction) {
+  const drivers = topRiskDrivers(prediction);
+  if (drivers.length) {
+    return `${prediction?.student_name || "This student"} is classified as ${riskBadgeLabel(prediction?.risk_level)}. Main risk drivers: ${drivers.join(", ")}.`;
+  }
+  if (prediction?.explanation?.summary) return prediction.explanation.summary;
+  return `${prediction?.student_name || "This student"} is classified as ${riskBadgeLabel(prediction?.risk_level)}.`;
+}
+
+function classNameFor(classesById, classId) {
+  return classesById.get(classId)?.name || classesById.get(classId)?.class_name || classId || "Class";
+}
+
+function normalizePrediction(row, summary, classesById) {
+  return {
+    ...row,
+    id: row.prediction_id || `${row.class_id || summary.class_id}-${row.student_id}`,
+    class_name: row.class_name || classNameFor(classesById, row.class_id || summary.class_id),
+    class_id: row.class_id || summary.class_id,
+    last_prediction: row.generated_at || row.predicted_at || summary.generated_at,
+    previous_prediction: previousPredictionFor(row, summary),
+  };
+}
+
+function predictionRowsForSummary(summary, classesById) {
+  const rows = summary.student_reports?.length
+    ? summary.student_reports
+    : summary.predictions?.length
+      ? summary.predictions
+      : summary.at_risk_students || [];
+  return rows.map((row) => normalizePrediction(row, summary, classesById));
+}
+
+function sortPredictions(rows) {
+  return [...rows].sort((first, second) => {
+    const riskDelta = (riskOrder[String(second.risk_level || "").toLowerCase()] || 0) - (riskOrder[String(first.risk_level || "").toLowerCase()] || 0);
+    if (riskDelta) return riskDelta;
+    return Number(second.confidence || second.model_confidence || 0) - Number(first.confidence || first.model_confidence || 0);
+  });
+}
+
+function learningConcernFallback(prediction) {
+  return studentRiskDriverCandidates(prediction).map((item) => item.label);
+}
+
+function xaiDriverImpacts(prediction) {
+  const explanation = prediction?.explanation || {};
+  const rows = [
+    ...(Array.isArray(explanation.negative_factors) ? explanation.negative_factors : []),
+    ...(Array.isArray(explanation.top_factors) ? explanation.top_factors.filter((factor) => factor?.direction !== "positive") : []),
+    ...(Array.isArray(prediction?.feature_importance) ? prediction.feature_importance.filter((factor) => factor?.direction !== "positive") : []),
+  ];
+  const impacts = new Map();
+  rows.forEach((factor) => {
+    const label = factorLabel(factor);
+    const impact = factorImpact(factor);
+    if (!label || impact === null) return;
+    impacts.set(label, Math.max(impacts.get(label) || 0, impact));
+  });
+  return impacts;
+}
+
+function addDriverCandidate(candidates, impacts, maxImpact, label, severity) {
+  if (!Number.isFinite(severity) || severity <= 0) return;
+  const impact = impacts.get(label) || 0;
+  const xaiScore = maxImpact > 0 ? (impact / maxImpact) * 25 : 0;
+  candidates.push({ label, score: severity + xaiScore, impact });
+}
+
+function studentRiskDriverCandidates(prediction) {
+  const impacts = xaiDriverImpacts(prediction);
+  const maxImpact = Math.max(...impacts.values(), 0);
+  const candidates = [];
+  const metricThreshold = 60;
+  const attendance = signalPercentNumber(studentSignalValue(prediction, ["attendance", "attendance_rate"]));
+  const participation = signalPercentNumber(studentSignalValue(prediction, ["participation", "participation_rate", "answer_rate"]));
+  const correctness = signalPercentNumber(studentSignalValue(prediction, ["correctness", "correctness_rate"]));
+  const semanticScore = signalPercentNumber(studentSignalValue(prediction, ["semantic_score", "average_semantic_score"]));
+  const engagement = signalPercentNumber(studentSignalValue(prediction, ["engagement", "engagement_score", "engagement_index", "derived_engagement_index"]));
+  const consistency = signalPercentNumber(studentSignalValue(prediction, ["consistency_score", "response_consistency"]));
+  const recentActivity = rawSignalNumber(studentSignalValue(prediction, ["recent_activity_count", "activity_last_7_days"]));
+  const responseTime = rawSignalNumber(studentSignalValue(prediction, ["response_time", "average_response_time"]));
+  const weakConceptsCount = rawSignalNumber(studentSignalValue(prediction, ["weak_concepts_count"]));
+  const bloomRows = bloomMasteryRowsForPrediction(prediction);
+  const assessedBloomRows = bloomRows.filter((row) => row.attempted_count > 0);
+  const bloomGaps = bloomRows.filter((row) => row.is_gap);
+
+  addDriverCandidate(candidates, impacts, maxImpact, "Low attendance", attendance === null ? 0 : metricThreshold - attendance);
+  addDriverCandidate(candidates, impacts, maxImpact, "Low correctness", correctness === null ? 0 : metricThreshold - correctness);
+  addDriverCandidate(candidates, impacts, maxImpact, "Weak short-answer quality", semanticScore === null ? 0 : metricThreshold - semanticScore);
+  addDriverCandidate(candidates, impacts, maxImpact, "Low participation", participation === null ? 0 : metricThreshold - participation);
+  addDriverCandidate(candidates, impacts, maxImpact, "Low engagement", engagement === null ? 0 : metricThreshold - engagement);
+  addDriverCandidate(candidates, impacts, maxImpact, "Inconsistent activity", consistency === null ? 0 : metricThreshold - consistency);
+  addDriverCandidate(candidates, impacts, maxImpact, "Recent inactivity", recentActivity !== null && recentActivity <= 0 ? 35 : 0);
+  addDriverCandidate(candidates, impacts, maxImpact, "Slow response behavior", responseTime !== null && responseTime > 90 ? Math.min(40, ((responseTime - 90) / 90) * 40) : 0);
+  if (assessedBloomRows.length > 0 && bloomGaps.length > 0) {
+    const bloomSeverity = Math.min(
+      60,
+      bloomGaps.reduce((total, row) => total + Math.max(0, BLOOM_MASTERY_THRESHOLD - Number(row.mastery_rate || 0)), 0) / bloomGaps.length
+        + (bloomGaps.length * 8),
+    );
+    addDriverCandidate(candidates, impacts, maxImpact, "Weak Bloom mastery", bloomSeverity);
+  } else if (weakConceptsCount !== null && weakConceptsCount > 0) {
+    addDriverCandidate(candidates, impacts, maxImpact, "Multiple weak concepts", Math.min(weakConceptsCount * 12, 48));
+  }
+
+  return candidates
+    .filter((row) => row.score > 0)
+    .sort((first, second) => second.score - first.score || second.impact - first.impact || first.label.localeCompare(second.label));
+}
+
+function topRiskDrivers(prediction) {
+  return [...new Set(learningConcernFallback(prediction))].slice(0, 3);
+}
+
+function RiskBadge({ level, className }) {
+  const clean = String(level || "").toLowerCase();
+  const Icon = clean === "low" ? CheckCircle2 : AlertTriangle;
   return (
-    <div className="grid min-w-28 grid-cols-[2.4rem_minmax(4rem,1fr)] items-center gap-2">
-      <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{percent}%</span>
-      <div className="h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-        <div className={`h-full rounded-full ${barClass}`} style={{ width: `${percent}%` }} />
-      </div>
-    </div>
+    <Badge tone={riskTone(level)} className={cn("px-3 py-1.5 text-sm font-black", className)}>
+      <Icon size={15} />
+      {riskBadgeLabel(level)}
+    </Badge>
   );
 }
 
-function InfoTip({ label, text }) {
+function TrendBadge({ prediction }) {
+  const trend = trendForPrediction(prediction);
+  const TrendIcon = trend.Icon;
+  const previous = prediction.previous_prediction;
   return (
-    <span className="group relative inline-flex">
-      <button
-        type="button"
-        className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-full border border-transparent text-slate-400 transition hover:border-[#E6ECEF] hover:bg-[#F7FAFA] hover:text-role-primary dark:hover:bg-slate-900"
-        aria-label={label}
+    <span className="group relative inline-flex w-fit">
+      <Badge
+        tone={trend.tone}
+        className={cn(
+          "px-3 py-1.5 font-black transition duration-200 group-hover:-translate-y-0.5",
+          trend.kind === "worsened" && "ring-1 ring-red-200 dark:ring-red-400/20",
+          trend.kind === "improved" && "ring-1 ring-emerald-200 dark:ring-emerald-400/20",
+        )}
       >
-        <Info size={14} />
-      </button>
-      <span className="pointer-events-none absolute right-0 top-9 z-30 w-72 translate-y-1 rounded-lg border border-role-border bg-white p-3 text-left text-xs font-semibold leading-5 text-slate-500 opacity-0 shadow-lift transition group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-        {text}
+        <TrendIcon size={14} />
+        {hasRiskLevel(previous) ? `${riskLabel(previous.risk_level)} -> ${riskLabel(prediction.risk_level)}` : trend.label}
+        {hasRiskLevel(previous) && <span className="font-black">({trend.label})</span>}
+      </Badge>
+      <span className="pointer-events-none absolute left-0 top-[calc(100%+0.5rem)] z-30 w-64 translate-y-1 whitespace-pre-line rounded-lg border border-role-border bg-white p-3 text-xs font-semibold leading-5 text-slate-600 opacity-0 shadow-lift transition group-hover:translate-y-0 group-hover:opacity-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+        {trend.title}
       </span>
     </span>
   );
 }
 
-function controlClass(className = "") {
-  return `adaptive-input focus-ring h-10 rounded-lg border border-[#E6ECEF] bg-white px-3 text-sm text-slate-700 shadow-none placeholder:text-slate-400 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 ${className}`;
-}
-
-function RiskCompact({ row }) {
+function CompactTrendPill({ prediction }) {
+  const trend = trendForPrediction(prediction);
+  const TrendIcon = trend.Icon;
+  const previous = prediction.previous_prediction;
+  const label = hasRiskLevel(previous)
+    ? `${riskLabel(previous.risk_level)} → ${riskLabel(prediction.risk_level)} · ${trend.label}`
+    : trend.label;
   return (
-    <div className="inline-flex items-center gap-2 whitespace-nowrap">
-      <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${getRiskBadgeClass(row.risk_level)}`}>{row.risk_level}</span>
-      <span className="text-slate-300 dark:text-slate-600">·</span>
-      <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{row.riskScore}</span>
-    </div>
-  );
-}
-
-function AtRiskIndicator({ count, total }) {
-  const hasRisk = count > 0;
-  return (
-    <div className="flex items-center">
-      <span
-        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-semibold ${
-          hasRisk
-            ? "border-red-100 bg-red-50 text-red-700 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-100"
-            : "border-emerald-100 bg-emerald-50 text-emerald-700 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-100"
-        }`}
-      >
-        <span className={`h-2 w-2 rounded-full ${hasRisk ? "bg-red-400" : "bg-emerald-400"}`} />
-        <span>{count} at-risk {count === 1 ? "student" : "students"}</span>
-        <span className="text-slate-300 dark:text-slate-600">·</span>
-        <span className="font-medium text-slate-500 dark:text-slate-300">{total} total</span>
-      </span>
-    </div>
-  );
-}
-
-function classesLabel(student, isAllClasses) {
-  if (!isAllClasses) return student.class_name || "Class";
-  const count = student.classesCount || 0;
-  return `${count} class${count === 1 ? "" : "es"}`;
-}
-
-function latestSessionLabel(student) {
-  return formatLastActive(student.latest_session_at || student.last_session_at || student.lastActive);
-}
-
-function trendLabel(student) {
-  const previous = Number(student.previousEngagement);
-  if (!Number.isFinite(previous)) return "No trend";
-  const delta = student.engagement - previous;
-  if (delta >= 5) return `+${Math.round(delta)} engagement`;
-  if (delta <= -5) return `${Math.round(delta)} engagement`;
-  return "Stable trend";
-}
-
-function matchesMetricFilter(value, filter) {
-  if (filter === "Low") return value < 60;
-  if (filter === "Medium") return value >= 60 && value < 80;
-  if (filter === "High") return value >= 80;
-  return true;
-}
-
-function matchesActivityFilter(student, filter) {
-  const inactive = daysSince(student.lastActive) > 30 || student.recentActivity < 50;
-  const activeDays = daysSince(student.lastActive);
-  return (
-    filter === "All"
-    || (filter === "Today" && activeDays === 0)
-    || (filter === "Last 7 days" && activeDays <= 7)
-    || (filter === "Last 30 days" && activeDays <= 30)
-    || (filter === "Inactive" && inactive)
-  );
-}
-
-export function filterStudents(students, { search, columnFilters }) {
-  const query = search.trim().toLowerCase();
-  return students.filter((student) => {
-    const matchesSearch = !query
-      || student.student_name?.toLowerCase().includes(query)
-      || student.class_name?.toLowerCase().includes(query)
-      || student.classNames?.join(" ").toLowerCase().includes(query);
-    const matchesRisk = columnFilters.risk === "All" || student.risk_level === columnFilters.risk;
-    const matchesActivity = matchesActivityFilter(student, columnFilters.lastActive);
-    const matchesAttendance = matchesMetricFilter(student.attendance, columnFilters.attendance);
-    const matchesCorrectness = matchesMetricFilter(student.correctness, columnFilters.correctness);
-    const matchesEngagement = matchesMetricFilter(student.engagement, columnFilters.engagement);
-    return matchesSearch && matchesRisk && matchesActivity && matchesAttendance && matchesCorrectness && matchesEngagement;
-  });
-}
-
-function getSortValue(student, key) {
-  if (key === "attendance") return student.attendance;
-  if (key === "correctness") return student.correctness;
-  if (key === "engagement") return student.engagement;
-  if (key === "lastActive") return getTimeValue(student.lastActive);
-  return student.riskScore;
-}
-
-export function sortStudents(students, sortConfig = { key: "risk", direction: "desc" }) {
-  return [...students].sort((first, second) => {
-    const firstValue = getSortValue(first, sortConfig.key);
-    const secondValue = getSortValue(second, sortConfig.key);
-    const direction = sortConfig.direction === "asc" ? 1 : -1;
-    const comparison = (firstValue - secondValue) * direction;
-    if (comparison !== 0) return comparison;
-    return first.attendance - second.attendance;
-  });
-}
-
-function DetailValue({ label, value, detail }) {
-  const percent = parsePercentValue(value);
-  const isTrackedMetric = perfectMetricLabels.has(label) && percent !== null;
-  if (isTrackedMetric && percent >= 100) {
-    return (
-      <>
-        <SuccessMetric />
-        {detail && <span className="ml-1 font-medium text-slate-500 dark:text-slate-400">· {detail}</span>}
-      </>
-    );
-  }
-  if (isTrackedMetric && percent <= 0) {
-    return (
-      <>
-        <ZeroMetric />
-        {detail && <span className="ml-1 font-medium text-slate-500 dark:text-slate-400">· {detail}</span>}
-      </>
-    );
-  }
-  if (isTrackedMetric) {
-    return (
-      <span className="inline-flex items-center gap-2">
-        <span className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-          <span className="block h-full rounded-full bg-[#6EADB5]" style={{ width: `${percent}%` }} />
-        </span>
-        <span>{percent}%</span>
-        {detail && <span className="font-medium text-slate-500 dark:text-slate-400">· {detail}</span>}
-      </span>
-    );
-  }
-  return (
-    <>
-      {value}
-      {detail && <span className="ml-1 font-medium text-slate-500 dark:text-slate-400">· {detail}</span>}
-    </>
-  );
-}
-
-function DetailMetric({ label, value, detail }) {
-  return (
-    <div className="grid gap-0.5 sm:grid-cols-[8.5rem_minmax(0,1fr)] sm:items-baseline">
-      <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{label}</p>
-      <p className="text-sm font-semibold text-slate-900 dark:text-white">
-        <DetailValue label={label} value={value} detail={detail} />
-      </p>
-    </div>
-  );
-}
-
-function HeaderFilter({
-  label,
-  columnKey,
-  options = metricFilterOptions,
-  filterValue,
-  sortConfig,
-  open,
-  active,
-  onOpen,
-  onSort,
-  onFilter,
-}) {
-  const sorted = sortConfig.key === columnKey;
-  const iconActive = active || sorted;
-
-  return (
-    <div className="relative inline-flex" data-header-filter>
-      <button
-        type="button"
-        className="group inline-flex items-center gap-1 rounded-md py-1 text-xs font-semibold uppercase tracking-wide text-slate-500 transition hover:text-[#2F7F8A]"
-        onClick={(event) => {
-          event.stopPropagation();
-          onOpen(open ? "" : columnKey);
-        }}
-      >
-        {label}
-        {active && <span className="h-1.5 w-1.5 rounded-full bg-[#2F7F8A]" />}
-        <ChevronDown
-          size={13}
-          className={`transition ${iconActive ? "text-[#2F7F8A] opacity-100" : "text-slate-400 opacity-60 group-hover:opacity-100"}`}
-        />
-      </button>
-
-      {open && (
-        <div className="absolute left-0 top-8 z-30 w-44 rounded-lg border border-[#E6ECEF] bg-white p-2 normal-case tracking-normal shadow-lift dark:border-slate-800 dark:bg-slate-900">
-          <button
-            type="button"
-            className="block w-full rounded-md px-2 py-1.5 text-left text-xs font-semibold text-slate-600 hover:bg-[#F7FAFA] dark:text-slate-200 dark:hover:bg-slate-800"
-            onClick={() => onSort(columnKey, "asc")}
-          >
-            Sort Ascending
-          </button>
-          <button
-            type="button"
-            className="block w-full rounded-md px-2 py-1.5 text-left text-xs font-semibold text-slate-600 hover:bg-[#F7FAFA] dark:text-slate-200 dark:hover:bg-slate-800"
-            onClick={() => onSort(columnKey, "desc")}
-          >
-            Sort Descending
-          </button>
-          <div className="my-1 h-px bg-slate-100 dark:bg-slate-800" />
-          {options.map((option) => (
-            <button
-              key={option}
-              type="button"
-              className={`block w-full rounded-md px-2 py-1.5 text-left text-xs font-semibold transition ${
-                filterValue === option
-                  ? "bg-[#EEF8F8] text-[#2F7F8A]"
-                  : "text-slate-600 hover:bg-[#F7FAFA] dark:text-slate-200 dark:hover:bg-slate-800"
-              }`}
-              onClick={() => onFilter(columnKey, option)}
-            >
-              {option === "All" ? "All" : option}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ClassHeaderFilter({ classes, classId, open, onOpen, onFilter }) {
-  const active = classId !== "";
-  const selectedClass = classes.find((classDoc) => classDoc.class_id === classId);
-  const options = [{ class_id: "", name: "All Classes" }, ...classes];
-
-  return (
-    <div className="relative inline-flex" data-header-filter>
-      <button
-        type="button"
-        className="group inline-flex items-center gap-1 rounded-md py-1 text-xs font-semibold uppercase tracking-wide text-slate-500 transition hover:text-[#2F7F8A]"
-        onClick={(event) => {
-          event.stopPropagation();
-          onOpen(open ? "" : "class");
-        }}
-        aria-label="Filter classes"
-      >
-        Classes
-        {active && <span className="h-1.5 w-1.5 rounded-full bg-[#2F7F8A]" />}
-        <School
-          size={13}
-          className={`transition ${active || open ? "text-[#2F7F8A] opacity-100" : "text-slate-400 opacity-60 group-hover:opacity-100"}`}
-        />
-      </button>
-
-      {open && (
-        <div className="absolute left-0 top-8 z-30 max-h-72 w-52 overflow-y-auto rounded-lg border border-[#E6ECEF] bg-white p-2 normal-case tracking-normal shadow-lift dark:border-slate-800 dark:bg-slate-900">
-          {options.map((option) => {
-            const selected = option.class_id === classId;
-            return (
-              <button
-                key={option.class_id || "all-classes"}
-                type="button"
-                className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs font-semibold transition ${
-                  selected
-                    ? "bg-[#EEF8F8] text-[#2F7F8A]"
-                    : "text-slate-600 hover:bg-[#F7FAFA] dark:text-slate-200 dark:hover:bg-slate-800"
-                }`}
-                onClick={() => onFilter(option.class_id)}
-              >
-                <span className="truncate">{option.name}</span>
-                {selected && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#2F7F8A]" />}
-              </button>
-            );
-          })}
-          {/* {active && selectedClass && (
-            <p className="mt-1 truncate px-2 py-1 text-[11px] font-medium text-slate-400 dark:text-slate-500">
-              Showing {selectedClass.name}
-            </p>
-          )} */}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RiskTable({
-  students,
-  classes,
-  classId,
-  isAllClasses,
-  expandedStudentId,
-  sortConfig,
-  columnFilters,
-  openHeaderMenu,
-  onToggleStudent,
-  onHeaderMenu,
-  onHeaderSort,
-  onHeaderFilter,
-  onClassFilter,
-}) {
-  const filterControls = {
-    attendance: { label: "Attendance", options: metricFilterOptions },
-    correctness: { label: "Correctness", options: metricFilterOptions },
-    engagement: { label: "Engagement", options: metricFilterOptions },
-    risk: { label: "Risk", options: ["All", ...riskLevels] },
-    lastActive: { label: "Last Active", options: activityFilters },
-  };
-
-  function renderHeader(columnKey) {
-    const control = filterControls[columnKey];
-    const active = columnFilters[columnKey] !== "All";
-    return (
-      <HeaderFilter
-        label={control.label}
-        columnKey={columnKey}
-        options={control.options}
-        filterValue={columnFilters[columnKey]}
-        sortConfig={sortConfig}
-        open={openHeaderMenu === columnKey}
-        active={active}
-        onOpen={onHeaderMenu}
-        onSort={onHeaderSort}
-        onFilter={onHeaderFilter}
-      />
-    );
-  }
-
-  return (
-    <div className="overflow-visible rounded-lg border border-[#E6ECEF] bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <div className="hidden overflow-x-auto overflow-y-visible lg:block">
-        <table className="w-full min-w-[920px] border-collapse text-left text-sm">
-          <thead className="bg-[#F7FAFA] text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-950 dark:text-slate-400">
-            <tr>
-              <th className="px-4 py-2.5 font-semibold">Student</th>
-              <th className="px-4 py-2.5 font-semibold">
-                <ClassHeaderFilter
-                  classes={classes}
-                  classId={classId}
-                  open={openHeaderMenu === "class"}
-                  onOpen={onHeaderMenu}
-                  onFilter={onClassFilter}
-                />
-              </th>
-              <th className="px-4 py-2.5 font-semibold">{renderHeader("attendance")}</th>
-              <th className="px-4 py-2.5 font-semibold">{renderHeader("correctness")}</th>
-              <th className="px-4 py-2.5 font-semibold">{renderHeader("engagement")}</th>
-              <th className="px-4 py-2.5 font-semibold">
-                <span className="inline-flex items-center gap-1">
-                  {renderHeader("risk")}
-                  <InfoTip label="Risk formula" text="Risk is 100 minus engagement. Engagement combines attendance, participation, correctness, response consistency, and recent activity." />
-                </span>
-              </th>
-              <th className="px-4 py-2.5 font-semibold">{renderHeader("lastActive")}</th>
-              <th className="px-4 py-2.5 font-semibold">Action</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {students.length === 0 && (
-              <tr>
-                <td className="px-4 py-8 text-center text-sm font-semibold text-slate-500 dark:text-slate-400" colSpan={8}>
-                  No students found.
-                </td>
-              </tr>
-            )}
-            {students.map((student) => {
-              const expanded = expandedStudentId === student.id;
-              return (
-                <Fragment key={student.id}>
-                  <tr
-                    className="cursor-pointer transition hover:bg-[#F7FAFA] dark:hover:bg-slate-800/60"
-                    onClick={() => onToggleStudent(student.id)}
-                  >
-                    <td className="px-4 py-3">
-                      <p className="font-semibold text-[#172B36] dark:text-white">{student.student_name}</p>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{classesLabel(student, isAllClasses)}</td>
-                    <td className="px-4 py-3"><MetricBar value={student.attendance} /></td>
-                    <td className="px-4 py-3"><MetricBar value={student.correctness} /></td>
-                    <td className="px-4 py-3"><MetricBar value={student.engagement} /></td>
-                    <td className="px-4 py-3"><RiskCompact row={student} /></td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{formatLastActive(student.lastActive)}</td>
-                    <td className="px-4 py-3">
-                      <Button type="button" size="sm" variant="outline" onClick={(event) => { event.stopPropagation(); onToggleStudent(student.id); }}>
-                        {expanded ? "Hide" : "View"}
-                      </Button>
-                    </td>
-                  </tr>
-                  {expanded && (
-                    <tr>
-                      <td className="bg-[#F7FAFA] px-4 py-3 dark:bg-slate-950/50" colSpan={8}>
-                        <ExpandedStudentDetails student={student} isAllClasses={isAllClasses} />
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="grid divide-y divide-slate-100 dark:divide-slate-800 lg:hidden">
-        <div className="flex items-center justify-between gap-3 p-4">
-          <ClassHeaderFilter
-            classes={classes}
-            classId={classId}
-            open={openHeaderMenu === "class"}
-            onOpen={onHeaderMenu}
-            onFilter={onClassFilter}
-          />
-          <span className="text-xs font-semibold text-slate-400">{students.length} shown</span>
-        </div>
-        {students.length === 0 && (
-          <div className="p-6 text-center text-sm font-semibold text-slate-500 dark:text-slate-400">
-            No students found.
-          </div>
+    <span className="group relative inline-flex max-w-full">
+      <Badge
+        tone={trend.tone}
+        className={cn(
+          "max-w-full px-2.5 py-1 text-xs font-black transition duration-200 group-hover:-translate-y-0.5",
+          trend.kind === "worsened" && "ring-1 ring-red-200 dark:ring-red-400/20",
+          trend.kind === "improved" && "ring-1 ring-emerald-200 dark:ring-emerald-400/20",
         )}
-        {students.map((student) => {
-          const expanded = expandedStudentId === student.id;
-          return (
-            <div key={student.id} className="p-4">
-              <button type="button" className="w-full text-left" onClick={() => onToggleStudent(student.id)}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold text-slate-950 dark:text-white">{student.student_name}</p>
-                    <p className="mt-1 text-sm font-semibold text-slate-500 dark:text-slate-400">{classesLabel(student, isAllClasses)}</p>
-                  </div>
-                  <RiskCompact row={student} />
-                </div>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <MetricBar value={student.attendance} />
-                  <MetricBar value={student.engagement} />
-                </div>
-                <div className="mt-3 flex items-center justify-between text-sm">
-                  <span className="font-semibold text-slate-500">Correctness</span>
-                  <MetricBar value={student.correctness} />
-                </div>
-              </button>
-              <div className="mt-3 flex justify-end">
-                <Button type="button" size="sm" variant="outline" onClick={() => onToggleStudent(student.id)}>
-                  {expanded ? "Hide" : "View"}
-                </Button>
-              </div>
-              {expanded && <div className="mt-4"><ExpandedStudentDetails student={student} isAllClasses={isAllClasses} /></div>}
-            </div>
-          );
-        })}
-      </div>
+      >
+        <TrendIcon size={13} className="shrink-0" />
+        <span className="truncate">{label}</span>
+      </Badge>
+      <span className="pointer-events-none absolute left-0 top-[calc(100%+0.5rem)] z-30 w-64 translate-y-1 whitespace-pre-line rounded-lg border border-role-border bg-white p-3 text-xs font-semibold leading-5 text-slate-600 opacity-0 shadow-lift transition group-hover:translate-y-0 group-hover:opacity-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+        {trend.title}
+      </span>
+    </span>
+  );
+}
+
+function CompactRiskDrivers({ prediction }) {
+  const drivers = topRiskDrivers(prediction);
+  return (
+    <div className="min-h-[2.5rem] text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">
+      {drivers.length ? drivers.map((driver, index) => (
+        <span key={driver} className="inline">
+          {index > 0 && <span className="px-1.5 text-slate-300 dark:text-slate-600">•</span>}
+          <span>{driver}</span>
+        </span>
+      )) : (
+        <span className="text-slate-500 dark:text-slate-400">No detailed drivers</span>
+      )}
     </div>
   );
 }
 
-function ExpandedStudentDetails({ student, isAllClasses }) {
+function StudentRiskCard({ prediction, onView }) {
   return (
-    <div className="rounded-lg border border-[#E6ECEF] bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-      <div className="grid gap-x-8 gap-y-2 md:grid-cols-2 xl:grid-cols-3">
-        <DetailMetric label="Participation" value={`${student.participation}%`} detail={`${student.questions_answered || 0}/${student.questions_presented || 0} questions`} />
-        <DetailMetric label="Response consistency" value={`${student.consistency}%`} />
-        <DetailMetric label="Recent activity" value={`${student.recentActivity}%`} />
-        <DetailMetric label="Reason" value={student.risk_reason} />
-        <DetailMetric label="Classes included" value={isAllClasses ? classesLabel(student, true) : student.class_name || "1 class"} detail={student.classNames?.join(", ")} />
-        <DetailMetric label="Latest session" value={latestSessionLabel(student)} detail={trendLabel(student)} />
+    <article className="flex min-h-[196px] flex-col justify-between rounded-lg border border-role-border bg-white p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
+      <div className="grid gap-3">
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-base font-black text-slate-950 dark:text-white" title={prediction.student_name || prediction.student_id}>
+              {prediction.student_name || prediction.student_id || "Student"}
+            </h3>
+          </div>
+          <RiskBadge level={prediction.risk_level} className="shrink-0 px-2.5 py-1 text-xs" />
+        </div>
+
+        <p className="truncate text-xs font-bold text-slate-500 dark:text-slate-400" title={prediction.class_name || ""}>
+          {prediction.class_name || "Class"}
+        </p>
+
+        <CompactTrendPill prediction={prediction} />
+
+        <CompactRiskDrivers prediction={prediction} />
       </div>
-    </div>
+
+      <div className="mt-4 flex items-center justify-between gap-3 border-t border-role-border pt-3 dark:border-slate-800">
+        <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+          Confidence {probabilityPercent(prediction.confidence ?? prediction.model_confidence)}
+        </span>
+        <button
+          type="button"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-role-border text-slate-500 transition hover:border-role-primary hover:text-role-primary focus:outline-none focus:ring-2 focus:ring-role-primary/30 dark:border-slate-800 dark:text-slate-400"
+          onClick={() => onView(prediction)}
+          aria-label={`View ${prediction.student_name || "student"} profile`}
+          title="View profile"
+        >
+          <Eye size={15} />
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function PredictionExplanationModal({ prediction, onClose }) {
+  const drivers = prediction ? topRiskDrivers(prediction) : [];
+  const bloomRows = bloomMasteryRowsForPrediction(prediction);
+  const assessedBloomRows = bloomRows.filter((row) => row.attempted_count > 0);
+  const bloomGapRows = bloomGapRowsForPrediction(prediction);
+  const notAssessedBloomRows = notAssessedBloomRowsForPrediction(prediction);
+  const actions = (prediction?.recommended_actions || prediction?.recommendations || []).slice(0, 4);
+  const signals = [
+    ["Attendance", studentSignalValue(prediction, ["attendance", "attendance_rate"])],
+    ["Participation", studentSignalValue(prediction, ["participation", "participation_rate", "answer_rate"])],
+    ["Correctness", studentSignalValue(prediction, ["correctness", "correctness_rate"])],
+    ["Engagement", studentSignalValue(prediction, ["engagement", "engagement_score", "engagement_index"])],
+    ["Semantic Score", studentSignalValue(prediction, ["semantic_score", "average_semantic_score"])],
+  ];
+
+  return (
+    <Modal open={Boolean(prediction)} title="Student Prediction Profile" onClose={onClose} panelClassName="max-w-3xl">
+      {prediction && (
+        <div className="grid gap-4">
+          <section className="rounded-lg border border-role-border p-4 dark:border-slate-800">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-black text-slate-950 dark:text-white">{prediction.student_name || "Student"}</h3>
+                <p className="mt-1 text-sm font-semibold text-slate-500 dark:text-slate-400">{prediction.class_name}</p>
+              </div>
+              <RiskBadge level={prediction.risk_level} />
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <TrendBadge prediction={prediction} />
+              <Badge tone="slate" className="px-3 py-1.5 font-black">
+                <Target size={14} />
+                Confidence {probabilityPercent(prediction.confidence ?? prediction.model_confidence)}
+              </Badge>
+              <Badge tone="slate" className="px-3 py-1.5 font-black">
+                Prediction Date {shortDate(prediction.last_prediction || prediction.generated_at || prediction.predicted_at)}
+              </Badge>
+            </div>
+            <p className="mt-4 text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">{predictionSummary(prediction)}</p>
+          </section>
+
+          <section className="rounded-lg border border-role-border p-4 dark:border-slate-800">
+            <h4 className="text-sm font-black text-slate-950 dark:text-white">Feature Summary</h4>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {signals.map(([label, value]) => (
+                <div key={label} className="flex items-center justify-between rounded-lg bg-role-hover px-3 py-2 dark:bg-slate-950/40">
+                  <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">{label}</span>
+                  <span className="font-black text-slate-950 dark:text-white">{signalPercent(value)}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-role-border p-4 dark:border-slate-800">
+            <h4 className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
+              <BrainCircuit size={17} className="text-role-primary" />
+              Main Risk Drivers
+            </h4>
+            <div className="mt-3 grid gap-2">
+              {drivers.length ? drivers.map((driver) => (
+                <div key={driver} className="flex items-center gap-2 rounded-lg bg-role-hover px-3 py-2 text-sm font-semibold text-slate-700 dark:bg-slate-950/40 dark:text-slate-200">
+                  <span className="h-1.5 w-1.5 rounded-full bg-role-primary" />
+                  {driver}
+                </div>
+              )) : <p className="rounded-lg bg-role-hover px-3 py-2 text-sm font-semibold text-slate-500 dark:bg-slate-950/40">No risk driver detail available.</p>}
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-role-border p-4 dark:border-slate-800">
+            <h4 className="flex items-center gap-2 text-sm font-black text-slate-950 dark:text-white">
+              {assessedBloomRows.length ? "Bloom-Level Mastery Gaps" : "Bloom Assessment"}
+              <span className="group relative inline-flex">
+                <Info size={14} className="text-role-primary" />
+                <span className="pointer-events-none absolute left-0 top-[calc(100%+0.5rem)] z-40 w-72 translate-y-1 rounded-lg border border-role-border bg-white p-3 text-xs font-semibold leading-5 text-slate-600 opacity-0 shadow-lift transition group-hover:translate-y-0 group-hover:opacity-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+                  {BLOOM_GAP_TOOLTIP}
+                </span>
+              </span>
+            </h4>
+            {assessedBloomRows.length ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {bloomGapRows.length ? bloomGapRows.map((row) => (
+                  <Badge key={row.level} tone="slate">
+                    {bloomLabel(row.label)} {Math.round(row.mastery_rate)}%
+                  </Badge>
+                )) : <span className="text-sm font-semibold text-slate-500">No assessed Bloom level is below mastery.</span>}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm font-semibold text-slate-500">No Bloom-level questions have been completed yet.</p>
+            )}
+            {assessedBloomRows.length > 0 && notAssessedBloomRows.length > 0 && (
+              <div className="mt-4 border-t border-role-border pt-3 dark:border-slate-800">
+                <p className="text-xs font-black uppercase tracking-wide text-slate-400">Not yet assessed</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {notAssessedBloomRows.map((row) => (
+                    <Badge key={row.level} tone="slate" className="opacity-60">{row.label}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+
+          
+        </div>
+      )}
+    </Modal>
   );
 }
 
 export function InstructorAtRiskStudentsPage() {
   const [classes, setClasses] = useState([]);
   const [classId, setClassId] = useState("");
-  const [students, setStudents] = useState([]);
-  const [expandedStudentId, setExpandedStudentId] = useState("");
-  const [search, setSearch] = useState("");
-  const [columnFilters, setColumnFilters] = useState(defaultColumnFilters);
-  const [sortConfig, setSortConfig] = useState({ key: "risk", direction: "desc" });
-  const [openHeaderMenu, setOpenHeaderMenu] = useState("");
+  const [summaries, setSummaries] = useState([]);
+  const [selectedPrediction, setSelectedPrediction] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const isAllClasses = classId === "";
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [riskFilter, setRiskFilter] = useState("");
+  const [trendFilter, setTrendFilter] = useState("");
+  const [driverFilter, setDriverFilter] = useState("");
 
-  const normalizedStudents = useMemo(
-    () => {
-      const rows = isAllClasses ? aggregateStudentMetricsAcrossClasses(students) : students.map(normalizeStudent);
-      return sortStudents(rows, { key: "risk", direction: "desc" });
-    },
-    [isAllClasses, students],
+  const classesById = useMemo(() => new Map(classes.map((row) => [row.class_id, row])), [classes]);
+
+  const allPredictions = useMemo(() => {
+    const rows = summaries.flatMap((summary) => predictionRowsForSummary(summary, classesById));
+    return sortPredictions(rows);
+  }, [classesById, summaries]);
+  const predictions = useMemo(
+    () => allPredictions.filter((prediction) => ["medium", "high"].includes(String(prediction.risk_level || "").toLowerCase())),
+    [allPredictions],
   );
-  const filteredStudents = useMemo(
-    () => sortStudents(filterStudents(normalizedStudents, { search, columnFilters }), sortConfig),
-    [columnFilters, normalizedStudents, search, sortConfig],
-  );
-  const averageAttendance = average(normalizedStudents.map((student) => student.attendance));
-  const averageParticipation = average(normalizedStudents.map((student) => student.participation));
-  const averageEngagement = average(normalizedStudents.map((student) => student.engagement));
-  const riskDistribution = riskLevels.map((level) => ({
-    level,
-    count: normalizedStudents.filter((student) => student.risk_level === level).length,
-  }));
-  const atRiskCount = normalizedStudents.filter((student) => student.risk_level !== "Low").length;
+  const driverOptions = useMemo(() => {
+    return [...new Set(predictions.flatMap((prediction) => topRiskDrivers(prediction)))].sort();
+  }, [predictions]);
+  const filteredPredictions = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return predictions.filter((prediction) => {
+      const drivers = topRiskDrivers(prediction);
+      const trend = trendForPrediction(prediction);
+      const matchesSearch = !query || [prediction.student_name, prediction.class_name, prediction.student_id].some((value) => String(value || "").toLowerCase().includes(query));
+      return matchesSearch
+        && (!riskFilter || riskLabel(prediction.risk_level) === riskFilter)
+        && (!trendFilter || trend.kind === trendFilter)
+        && (!driverFilter || drivers.includes(driverFilter));
+    });
+  }, [driverFilter, predictions, riskFilter, search, trendFilter]);
+  const riskDistribution = useMemo(() => (
+    allPredictions.reduce((counts, prediction) => {
+      const level = String(prediction.risk_level || "low").toLowerCase();
+      if (level === "high" || level === "medium" || level === "low") counts[level] += 1;
+      return counts;
+    }, { low: 0, medium: 0, high: 0 })
+  ), [allPredictions]);
 
   async function loadPage(nextClassId = classId) {
     setLoading(true);
+    setError("");
     try {
-      const classResult = await listClasses().catch(() => []);
-      const selectedClassId = nextClassId || "";
-      setClasses(classResult);
-      setClassId(selectedClassId);
-      const result = await getAtRiskStudents({ class_id: selectedClassId || undefined, include_all: true });
-      setStudents(result);
-      setExpandedStudentId((current) => {
-        const normalized = (selectedClassId ? result.map(normalizeStudent) : aggregateStudentMetricsAcrossClasses(result))
-          .sort((first, second) => second.riskScore - first.riskScore || first.attendance - second.attendance);
-        if (normalized.some((student) => student.id === current)) return current;
-        return "";
-      });
+      const classRows = await listClasses();
+      setClasses(classRows);
+      const classIds = nextClassId ? [nextClassId] : classRows.map((row) => row.class_id).filter(Boolean);
+      const summaryRows = await Promise.all(classIds.map((id) => getClassPredictionSummary(id).catch(() => ({ class_id: id, at_risk_students: [], empty: true }))));
+      setClassId(nextClassId || "");
+      setSummaries(summaryRows);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load classroom support insights");
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    loadPage(classId);
+    loadPage("");
   }, []);
 
-  useEffect(() => {
-    function closeHeaderMenu(event) {
-      if (!openHeaderMenu) return;
-      if (event.target?.closest?.("[data-header-filter]")) return;
-      setOpenHeaderMenu("");
-    }
-
-    document.addEventListener("mousedown", closeHeaderMenu);
-    return () => document.removeEventListener("mousedown", closeHeaderMenu);
-  }, [openHeaderMenu]);
-
-  async function handleRecalculate() {
+  async function handleRefresh() {
     setRefreshing(true);
+    setError("");
     try {
-      const targetClassIds = classId ? [classId] : classes.map((classDoc) => classDoc.class_id);
-      await Promise.all(targetClassIds.map((targetClassId) => recalculateClassAnalytics(targetClassId).catch(() => null)));
+      const targetClassIds = classId ? [classId] : classes.map((row) => row.class_id).filter(Boolean);
+      await Promise.all(targetClassIds.map((id) => runPredictionAnalysis(id).catch(() => null)));
       await loadPage(classId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not refresh classroom support insights");
     } finally {
       setRefreshing(false);
     }
   }
 
-  function handleClassFilter(nextClassId) {
-    setClassId(nextClassId || "");
-    setExpandedStudentId("");
-    setOpenHeaderMenu("");
-    void loadPage(nextClassId);
+  function handleClassFilter(event) {
+    void loadPage(event.target.value);
   }
 
-  function handleHeaderSort(columnKey, direction) {
-    setSortConfig({ key: columnKey, direction });
-    setOpenHeaderMenu("");
-  }
-
-  function handleHeaderFilter(columnKey, value) {
-    setColumnFilters((current) => ({ ...current, [columnKey]: value }));
-    setOpenHeaderMenu("");
-  }
-
-  function toggleStudent(studentId) {
-    setExpandedStudentId((current) => (current === studentId ? "" : studentId));
+  function clearCardFilters() {
+    setSearch("");
+    setRiskFilter("");
+    setTrendFilter("");
+    setDriverFilter("");
   }
 
   return (
-    <div className="page-grid">
+    <div className="page-grid gap-6">
       <PageHeader
         title="At-Risk Students"
-        description="Identify students who may need support."
-        tone="role"
-        action={
-          <div className="flex items-center gap-2">
-            <InfoTip label="Risk formula" text="Risk is 100 minus engagement. Engagement combines attendance, participation, correctness, response consistency, and recent activity." />
-            <Button type="button" variant="role" loading={refreshing} onClick={handleRecalculate}>
-              <RefreshCw size={18} />
-              Recalculate
+                tone="role"
+        action={(
+          <div className="flex w-full flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
+            <select
+              className="adaptive-input h-10 w-full rounded-lg border border-role-border bg-white px-3 text-sm font-semibold dark:border-slate-800 dark:bg-slate-900 sm:w-56"
+              value={classId}
+              onChange={handleClassFilter}
+              aria-label="Class filter"
+            >
+              <option value="">All Classes</option>
+              {classes.map((classDoc) => (
+                <option key={classDoc.class_id} value={classDoc.class_id}>{classDoc.name}</option>
+              ))}
+            </select>
+            <Button type="button" variant="role" loading={refreshing} onClick={handleRefresh} className="h-10">
+              <RefreshCw size={17} />
+              Refresh
             </Button>
           </div>
-        }
+        )}
       />
 
+      {error && <DashboardCard className="p-4"><p className="text-sm font-semibold text-red-600">{error}</p></DashboardCard>}
+
       {!loading && classes.length > 0 && (
-        <AtRiskIndicator count={atRiskCount} total={normalizedStudents.length} />
+        <DashboardCard className="border-l-4 border-l-red-500 p-5 shadow-sm">
+          <p className="text-sm font-black text-slate-600 dark:text-slate-300">Students Requiring Support</p>
+          <p className="mt-2 text-3xl font-black text-slate-950 dark:text-white">{predictions.length}</p>
+        </DashboardCard>
       )}
 
-      {loading && <DashboardCard>Loading students...</DashboardCard>}
+      {loading && <DashboardCard className="p-5"><p className="text-sm font-semibold text-slate-500">Loading support insights...</p></DashboardCard>}
+
       {!loading && classes.length === 0 && (
-        <EmptyState
-          title="No classes yet"
-          description="Classes will appear here after they are created."
-        />
+        <EmptyState title="No assigned classes" description="Classroom support insights appear after classes are assigned to you." />
       )}
 
       {!loading && classes.length > 0 && (
-        <>
-          <DashboardCard className="grid gap-3 border-[#E6ECEF] bg-white shadow-sm">
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="min-w-56 flex-1">
-                <input
-                  className={controlClass("w-full")}
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search student..."
-                />
-              </label>
+        <DashboardCard className="p-4 shadow-sm">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-wide text-role-primary">AI Decision Support</p>
+              <h2 className="mt-1 text-lg font-black text-slate-950 dark:text-white">Students Requiring Support</h2>
             </div>
+            <Badge tone="slate">{filteredPredictions.length} monitored</Badge>
+          </div>
 
-            <RiskTable
-              students={filteredStudents}
-              classes={classes}
-              classId={classId}
-              isAllClasses={isAllClasses}
-              expandedStudentId={expandedStudentId}
-              sortConfig={sortConfig}
-              columnFilters={columnFilters}
-              openHeaderMenu={openHeaderMenu}
-              onToggleStudent={toggleStudent}
-              onHeaderMenu={setOpenHeaderMenu}
-              onHeaderSort={handleHeaderSort}
-              onHeaderFilter={handleHeaderFilter}
-              onClassFilter={handleClassFilter}
-            />
-          </DashboardCard>
+          <div className="mt-4">
+            <TableToolbar
+              search={search}
+              onSearchChange={setSearch}
+              searchPlaceholder="Search students"
+              filters={[
+                { key: "risk", label: "Risk", valueLabel: riskFilter, onClear: () => setRiskFilter("") },
+                { key: "trend", label: "Trend", valueLabel: trendFilterLabels[trendFilter] || "", onClear: () => setTrendFilter("") },
+                { key: "driver", label: "Driver", valueLabel: driverFilter, onClear: () => setDriverFilter("") },
+              ]}
+              onClearFilters={clearCardFilters}
+            >
+              <TableHeaderFilter
+                label="Risk"
+                value={riskFilter}
+                onChange={setRiskFilter}
+                allLabel="All risk"
+                options={[
+                  { value: "High", label: "High" },
+                  { value: "Medium", label: "Medium" },
+                ]}
+              />
+              <TableHeaderFilter
+                label="Trend"
+                value={trendFilter}
+                onChange={setTrendFilter}
+                allLabel="All trends"
+                options={[
+                  { value: "worsened", label: "Worsened" },
+                  { value: "improved", label: "Improved" },
+                  { value: "stable", label: "Stable" },
+                  { value: "initial", label: "Initial Prediction" },
+                ]}
+              />
+              <TableHeaderFilter
+                label="Driver"
+                value={driverFilter}
+                onChange={setDriverFilter}
+                allLabel="All drivers"
+                align="right"
+                options={driverOptions.map((driver) => ({ value: driver, label: driver }))}
+              />
+            </TableToolbar>
+          </div>
 
-          {normalizedStudents.length > 0 && (
-            <div className="grid gap-4 xl:grid-cols-[1fr_0.8fr]">
-              <DashboardCard className="border-[#E6ECEF] bg-white p-4 shadow-sm">
-                <h2 className="text-sm font-semibold text-[#172B36] dark:text-white">Learning Signals</h2>
-                <div className="mt-3 h-40">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={[
-                      { metric: "Attendance", score: averageAttendance },
-                      { metric: "Participation", score: averageParticipation },
-                      { metric: "Engagement", score: averageEngagement },
-                    ]}>
-                      <XAxis dataKey="metric" axisLine={false} tickLine={false} />
-                      <YAxis axisLine={false} tickLine={false} domain={[0, 100]} />
-                      <Tooltip />
-                      <Bar dataKey="score" fill="#8BC3C7" radius={[8, 8, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            {[
+              ["high", "High Risk", riskDistribution.high],
+              ["medium", "Medium Risk", riskDistribution.medium],
+              ["low", "Low Risk", riskDistribution.low],
+            ].map(([key, label, value]) => (
+              <div key={key} className="rounded-lg bg-role-hover p-3 dark:bg-slate-950/40">
+                <div className="flex items-center gap-2">
+                  <span className={cn(
+                    "h-2.5 w-2.5 rounded-full",
+                    key === "high" && "bg-red-500",
+                    key === "medium" && "bg-amber-500",
+                    key === "low" && "bg-emerald-500",
+                  )}
+                  />
+                  <span className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</span>
                 </div>
-              </DashboardCard>
-              <DashboardCard className="border-[#E6ECEF] bg-white p-4 shadow-sm">
-                <h2 className="text-sm font-semibold text-[#172B36] dark:text-white">Risk Distribution</h2>
-                <div className="mt-3 h-40">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={riskDistribution}>
-                      <XAxis dataKey="level" axisLine={false} tickLine={false} />
-                      <YAxis allowDecimals={false} axisLine={false} tickLine={false} />
-                      <Tooltip />
-                      <Bar dataKey="count" fill="#9CC9CD" radius={[8, 8, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </DashboardCard>
+                <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{value}</p>
+              </div>
+            ))}
+          </div>
+
+          {filteredPredictions.length === 0 ? (
+            <div className="mt-4 rounded-lg border border-role-border bg-role-hover/60 p-5 text-center text-sm font-semibold text-slate-500 dark:border-slate-800 dark:bg-slate-950/30">
+              No students match the current support filters.
+            </div>
+          ) : (
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {filteredPredictions.map((prediction) => (
+                <StudentRiskCard key={prediction.id} prediction={prediction} onView={setSelectedPrediction} />
+              ))}
             </div>
           )}
-        </>
+        </DashboardCard>
       )}
+
+      <PredictionExplanationModal prediction={selectedPrediction} onClose={() => setSelectedPrediction(null)} />
     </div>
   );
 }

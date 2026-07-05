@@ -1,6 +1,7 @@
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 import logging
+import os
 from statistics import mean
 from typing import Any
 
@@ -22,7 +23,29 @@ MODEL_METADATA = {
     "metrics": {"status": "explainable baseline; replace with validated XGBoost/sklearn metrics later"},
 }
 
+BLOOM_LEVEL_LABELS = {
+    "remember": "Remember",
+    "understand": "Understand",
+    "apply": "Apply",
+    "analyze": "Analyze",
+    "evaluate": "Evaluate",
+    "create": "Create",
+}
+MASTERY_THRESHOLD = 60.0
+
 logger = logging.getLogger(__name__)
+
+PERCENTAGE_INFERENCE_FEATURES = {
+    "attendance_rate",
+    "participation_rate",
+    "correctness_rate",
+    "semantic_score",
+    "average_semantic_score",
+    "engagement_score",
+    "consistency_score",
+}
+RESPONSE_TIME_FEATURES = {"response_time", "average_response_time"}
+MAX_RESPONSE_TIME_SECONDS = 180.0
 
 
 def clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
@@ -35,6 +58,16 @@ def percent(numerator: float, denominator: float) -> float:
     if not denominator:
         return 0.0
     return clamp((float(numerator) / float(denominator)) * 100)
+
+
+def bloom_mastery_status(mastery_rate: float) -> str:
+    if mastery_rate >= 80:
+        return "Strong"
+    if mastery_rate >= 60:
+        return "Acceptable"
+    if mastery_rate >= 40:
+        return "Needs Attention"
+    return "Needs Improvement"
 
 
 def as_datetime(value: Any) -> datetime | None:
@@ -54,6 +87,15 @@ def average(values: list[float]) -> float:
     return round(mean(clean), 4) if clean else 0.0
 
 
+def numeric_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def latest_analytics(rows: list[dict]) -> dict:
     if not rows:
         return {}
@@ -71,6 +113,100 @@ def question_concept(question: dict | None) -> str:
     if text:
         return " ".join(text.split()[:4]).strip(" ?.,").title() or "General"
     return "General"
+
+
+def question_bloom_level(question: dict | None) -> str | None:
+    value = str((question or {}).get("bloom_level") or "").strip().lower()
+    return BLOOM_LEVEL_LABELS.get(value)
+
+
+def mapping_value_for_bloom_level(mapping: dict | None, level: str, default: Any = 0) -> Any:
+    if not isinstance(mapping, dict):
+        return default
+    if level in mapping:
+        return mapping.get(level, default)
+    level_key = level.strip().lower()
+    for key, value in mapping.items():
+        if str(key).strip().lower() == level_key:
+            return value
+    return default
+
+
+def bloom_mastery_by_level_value(feature: dict) -> dict[str, dict]:
+    existing = feature.get("bloom_mastery_by_level")
+    existing_rows = (
+        [
+            {"bloom_level": key, **value} if isinstance(value, dict) else {"bloom_level": key}
+            for key, value in existing.items()
+        ]
+        if isinstance(existing, dict)
+        else existing
+        if isinstance(existing, list)
+        else []
+    )
+    answer_counts = feature.get("concept_answer_counts") or {}
+    correct_counts = feature.get("concept_correct_answer_counts") or {}
+    correctness_map = feature.get("concept_correctness_map") or {}
+    rows: dict[str, dict] = {}
+    for level in BLOOM_LEVEL_LABELS.values():
+        existing_row = next(
+            (
+                row
+                for row in existing_rows
+                if isinstance(row, dict)
+                and str(row.get("bloom_level") or row.get("level") or row.get("concept") or "").strip().lower() == level.lower()
+            ),
+            {},
+        )
+        attempted_value = numeric_or_none(
+            existing_row.get("attempted_count")
+            if existing_row.get("attempted_count") is not None
+            else existing_row.get("questions_answered")
+            if existing_row.get("questions_answered") is not None
+            else mapping_value_for_bloom_level(answer_counts, level, None)
+        )
+        correct_value = numeric_or_none(
+            existing_row.get("correct_count")
+            if existing_row.get("correct_count") is not None
+            else existing_row.get("correct_answers")
+            if existing_row.get("correct_answers") is not None
+            else mapping_value_for_bloom_level(correct_counts, level, None)
+        )
+        attempted_count = int(attempted_value or 0)
+        correct_count = int(correct_value or 0)
+        mastery_rate = None
+        if attempted_count > 0:
+            if correct_value is not None:
+                mastery_rate = percent(correct_count, attempted_count)
+            else:
+                mastery_value = numeric_or_none(
+                    existing_row.get("mastery_rate")
+                    if existing_row.get("mastery_rate") is not None
+                    else existing_row.get("average_correctness")
+                    if existing_row.get("average_correctness") is not None
+                    else mapping_value_for_bloom_level(correctness_map, level, None)
+                )
+                if mastery_value is not None:
+                    mastery_rate = clamp(mastery_value * 100 if 0 <= mastery_value <= 1 else mastery_value)
+        rows[level] = {
+            "bloom_level": level,
+            "attempted_count": attempted_count,
+            "correct_count": correct_count,
+            "mastery_rate": mastery_rate,
+            "mastery_threshold": MASTERY_THRESHOLD,
+            "is_mastery_gap": attempted_count > 0 and mastery_rate is not None and mastery_rate < MASTERY_THRESHOLD,
+        }
+    return rows
+
+
+def tested_bloom_gap_levels(feature: dict) -> list[str]:
+    return [
+        level
+        for level, row in bloom_mastery_by_level_value(feature).items()
+        if int(row.get("attempted_count") or 0) > 0
+        and numeric_or_none(row.get("mastery_rate")) is not None
+        and float(row.get("mastery_rate")) < MASTERY_THRESHOLD
+    ]
 
 
 def response_is_correct(response: dict) -> bool:
@@ -147,6 +283,36 @@ def model_feature_values(feature: dict) -> dict[str, float]:
     return {name: feature_vector(feature, [name])[0] for name in PREDICTION_FEATURE_COLUMNS}
 
 
+def normalize_inference_features(feature: dict) -> dict:
+    """
+    Live inference must match the training feature schema. Training expects
+    semantic_score on a 0-100 scale and response_time as seconds-per-answer.
+    The persisted source feature document is left untouched; only the model
+    input copy is normalized.
+    """
+    normalized = dict(feature)
+
+    for name in PERCENTAGE_INFERENCE_FEATURES:
+        if name not in normalized or normalized.get(name) is None:
+            continue
+        value = numeric_or_none(normalized.get(name))
+        if value is None:
+            continue
+        if name in {"semantic_score", "average_semantic_score"} and 0 <= value <= 1:
+            value *= 100
+        normalized[name] = clamp(value)
+
+    for name in RESPONSE_TIME_FEATURES:
+        if name not in normalized or normalized.get(name) is None:
+            continue
+        value = numeric_or_none(normalized.get(name))
+        if value is None:
+            continue
+        normalized[name] = round(max(0.0, min(value, MAX_RESPONSE_TIME_SECONDS)), 2)
+
+    return normalized
+
+
 def engagement_context(feature: dict) -> dict[str, int | str]:
     context = {name: int(float(feature.get(name) or 0)) for name in GAMIFICATION_CONTEXT_COLUMNS}
     context["note"] = "Engagement context, not used by the risk model."
@@ -165,6 +331,305 @@ def fallback_confidence_from_risk_score(score: float, level: str) -> float:
 
 def bounded_model_confidence(value: float) -> float:
     return round(max(0.0, min(float(value or 0), 0.97)), 4)
+
+
+def probability_value(value: Any) -> float:
+    try:
+        numeric = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if numeric > 1:
+        numeric /= 100
+    return max(0.0, min(numeric, 1.0))
+
+
+def predicted_class_confidence(row: dict) -> float:
+    probabilities = row.get("risk_probabilities")
+    risk_level = str(row.get("risk_level") or "").lower()
+    if isinstance(probabilities, dict) and risk_level in probabilities:
+        return round(probability_value(probabilities[risk_level]), 4)
+    return round(probability_value(row.get("confidence", row.get("model_confidence"))), 4)
+
+
+def prediction_probabilities_value(row: dict) -> dict | None:
+    raw = row.get("risk_probabilities")
+    if not isinstance(raw, dict) or not raw:
+        return raw
+    return {str(key).lower(): round(probability_value(value), 4) for key, value in raw.items()}
+
+
+def has_prediction_confidence(row: dict) -> bool:
+    probabilities = prediction_probabilities_value(row)
+    predicted_level = str(row.get("risk_level") or "").lower()
+    return (
+        isinstance(probabilities, dict)
+        and predicted_level in probabilities
+    ) or row.get("confidence", row.get("model_confidence")) is not None
+
+
+def prediction_feature_value(features: dict, *names: str) -> float:
+    for name in names:
+        value = features.get(name)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return 0.0
+
+
+def report_factor_label(feature_name: str) -> str:
+    return driver_label(feature_name)
+
+
+def report_factor_direction(label: str, features: dict) -> str:
+    if label == "Bloom Mastery Gaps":
+        return "negative" if tested_bloom_gap_levels(features) else "positive"
+    if label == "Response Time":
+        return "negative" if prediction_feature_value(features, "response_time", "average_response_time") > 45 else "positive"
+    value_map = {
+        "Attendance": prediction_feature_value(features, "attendance_rate"),
+        "Participation": prediction_feature_value(features, "participation_rate", "answer_rate"),
+        "Correctness": prediction_feature_value(features, "correctness_rate"),
+        "Semantic Score": prediction_feature_value(features, "semantic_score", "average_semantic_score"),
+        "Consistency": prediction_feature_value(features, "consistency_score"),
+        "Recent Activity": min(prediction_feature_value(features, "recent_activity_count") * 10, 100),
+        "Engagement": prediction_feature_value(features, "engagement_score"),
+    }
+    return "positive" if value_map.get(label, 0) >= 60 else "negative"
+
+
+def report_reason_factors(prediction: dict) -> list[dict]:
+    features = prediction.get("features") or {}
+    bloom_gap_count = len(tested_bloom_gap_levels(features))
+    factors = []
+    candidates = [
+        ("Attendance", prediction_feature_value(features, "attendance_rate"), max(0, 60 - prediction_feature_value(features, "attendance_rate"))),
+        ("Participation", prediction_feature_value(features, "participation_rate", "answer_rate"), max(0, 60 - prediction_feature_value(features, "participation_rate", "answer_rate"))),
+        ("Correctness", prediction_feature_value(features, "correctness_rate"), max(0, 60 - prediction_feature_value(features, "correctness_rate"))),
+        ("Semantic Score", prediction_feature_value(features, "semantic_score", "average_semantic_score"), max(0, 60 - prediction_feature_value(features, "semantic_score", "average_semantic_score"))),
+        ("Consistency", prediction_feature_value(features, "consistency_score"), max(0, 60 - prediction_feature_value(features, "consistency_score"))),
+        ("Recent Activity", prediction_feature_value(features, "recent_activity_count"), 12 if prediction_feature_value(features, "recent_activity_count") == 0 else max(0, 5 - prediction_feature_value(features, "recent_activity_count")) * 2),
+        ("Bloom Mastery Gaps", bloom_gap_count, min(bloom_gap_count * 8, 24)),
+    ]
+    for label, value, impact in candidates:
+        if impact > 0:
+            factors.append({"factor": label, "impact": round(float(impact), 4), "value": round(float(value), 4), "direction": "negative"})
+        elif value:
+            factors.append({"factor": label, "impact": round(min(float(value), 100) / 8, 4), "value": round(float(value), 4), "direction": "positive"})
+    return factors
+
+
+def explain_prediction(prediction: dict) -> dict:
+    features = prediction.get("features") or {}
+    importance = prediction.get("feature_importance") or []
+    factors = []
+    for item in importance:
+        feature_name = str(item.get("feature") or "")
+        if feature_name not in PREDICTION_FEATURE_COLUMNS:
+            continue
+        label = report_factor_label(feature_name)
+        try:
+            impact = float(item.get("importance") or 0)
+        except (TypeError, ValueError):
+            impact = 0.0
+        if impact <= 0:
+            continue
+        factors.append(
+            {
+                "factor": label,
+                "impact": round(impact, 4),
+                "value": round(float(features.get(feature_name, 0) or 0), 4),
+                "direction": report_factor_direction(label, features),
+                "source": "feature_importance",
+            }
+        )
+    if not factors:
+        factors = report_reason_factors(prediction)
+    merged: dict[str, dict] = {}
+    for factor in factors:
+        current = merged.get(factor["factor"])
+        if not current or factor["impact"] > current["impact"]:
+            merged[factor["factor"]] = factor
+    top_factors = sorted(merged.values(), key=lambda row: row["impact"], reverse=True)[:8]
+    negative = [row for row in top_factors if row.get("direction") == "negative"][:4]
+    positive = [row for row in top_factors if row.get("direction") == "positive"][:4]
+    risk_level = str(prediction.get("risk_level") or "low").title()
+    negative_names = ", ".join(row["factor"].lower() for row in negative[:3]) or "the available learning signals"
+    positive_names = ", ".join(row["factor"].lower() for row in positive[:2]) or "some steady engagement signals"
+    summary = (
+        f"{prediction.get('student_name', 'This student')} is classified as {risk_level} Academic Risk mainly because "
+        f"{negative_names} influenced the prediction. {positive_names.title()} provide counter-signals where present."
+    )
+    return {
+        "summary": summary,
+        "positive_factors": positive,
+        "negative_factors": negative,
+        "top_factors": top_factors,
+    }
+
+
+def previous_prediction_snapshot(prediction: dict | None) -> dict | None:
+    if not prediction:
+        return None
+    confidence = predicted_class_confidence(prediction)
+    features = dict(prediction.get("features") or {})
+    bloom_mastery = bloom_mastery_by_level_value(features)
+    bloom_gaps = tested_bloom_gap_levels({**features, "bloom_mastery_by_level": bloom_mastery})
+    risk_reasons = prediction.get("risk_reasons") or prediction.get("reasons") or []
+    if not bloom_gaps:
+        risk_reasons = [
+            reason
+            for reason in risk_reasons
+            if "bloom" not in str(reason).lower() and "mastery" not in str(reason).lower()
+        ]
+    return {
+        "prediction_id": prediction.get("prediction_id"),
+        "student_id": prediction.get("student_id"),
+        "student_name": prediction.get("student_name"),
+        "class_id": prediction.get("class_id"),
+        "risk_level": prediction.get("risk_level", "low"),
+        "risk_score": prediction.get("risk_score", 0),
+        "confidence": confidence,
+        "model_confidence": confidence,
+        "risk_probability": prediction.get("risk_probability", 0),
+        "risk_probabilities": prediction_probabilities_value(prediction),
+        "risk_reasons": risk_reasons,
+        "weak_concepts": bloom_gaps,
+        "weak_concepts_count": len(bloom_gaps),
+        "bloom_mastery_by_level": bloom_mastery,
+        "generated_at": prediction.get("generated_at"),
+        "predicted_at": prediction.get("predicted_at") or prediction.get("generated_at"),
+    }
+
+
+def prediction_trend_payload(prediction: dict) -> dict:
+    previous = previous_prediction_snapshot(prediction.get("previous_prediction"))
+    if not previous:
+        return {
+            "status": "initial",
+            "label": "Initial Prediction",
+            "previous_risk_level": None,
+            "current_risk_level": prediction.get("risk_level", "low"),
+            "risk_score_difference": None,
+            "previous_prediction_date": None,
+            "current_prediction_date": prediction.get("generated_at") or prediction.get("predicted_at"),
+        }
+    risk_rank = {"low": 1, "medium": 2, "high": 3}
+    previous_level = str(previous.get("risk_level") or "low").lower()
+    current_level = str(prediction.get("risk_level") or "low").lower()
+    delta = risk_rank.get(current_level, 0) - risk_rank.get(previous_level, 0)
+    previous_score = previous.get("risk_score")
+    current_score = prediction.get("risk_score")
+    try:
+        score_difference = round(float(current_score or 0) - float(previous_score or 0), 2)
+    except (TypeError, ValueError):
+        score_difference = None
+    if delta > 0:
+        label = "Slight decline" if delta == 1 and previous_level == "low" else "Worsening"
+        status = "worsening"
+    elif delta < 0:
+        label = "Major improvement" if abs(delta) > 1 else "Improving"
+        status = "improving"
+    else:
+        label = "Stable"
+        status = "stable"
+    return {
+        "status": status,
+        "label": label,
+        "previous_risk_level": previous_level,
+        "current_risk_level": current_level,
+        "risk_score_difference": score_difference,
+        "previous_prediction_date": previous.get("generated_at") or previous.get("predicted_at"),
+        "current_prediction_date": prediction.get("generated_at") or prediction.get("predicted_at"),
+    }
+
+
+def prediction_report_status(risk_level: str) -> str:
+    normalized = str(risk_level or "").lower()
+    if normalized == "high":
+        return "Critical"
+    if normalized == "medium":
+        return "Needs Attention"
+    return "Stable"
+
+
+def prediction_report_payload(
+    prediction: dict,
+    class_names: dict[str, str] | None = None,
+    class_meta: dict[str, dict] | None = None,
+    instructor_display=None,
+) -> dict:
+    class_names = class_names or {}
+    class_meta = class_meta or {}
+    class_id = prediction.get("class_id")
+    features = dict(prediction.get("features") or {})
+    bloom_mastery = bloom_mastery_by_level_value(features)
+    bloom_gaps = tested_bloom_gap_levels({**features, "bloom_mastery_by_level": bloom_mastery})
+    features = {
+        **features,
+        "bloom_mastery_by_level": bloom_mastery,
+        "weak_concepts": bloom_gaps,
+        "weak_concepts_count": len(bloom_gaps),
+    }
+    risk_reasons = prediction.get("risk_reasons") or prediction.get("reasons") or []
+    if not bloom_gaps:
+        risk_reasons = [
+            reason
+            for reason in risk_reasons
+            if "bloom" not in str(reason).lower() and "mastery" not in str(reason).lower()
+        ]
+    display_prediction = {
+        **prediction,
+        "features": features,
+        "weak_concepts": bloom_gaps,
+        "risk_reasons": risk_reasons,
+        "reasons": risk_reasons,
+    }
+    confidence = predicted_class_confidence(prediction)
+    generated_at = prediction.get("generated_at") or prediction.get("predicted_at")
+    predicted_at = prediction.get("predicted_at") or prediction.get("generated_at")
+    instructor = instructor_display(class_id) if callable(instructor_display) and class_id else "Unassigned"
+    return {
+        "prediction_id": prediction.get("prediction_id"),
+        "student_id": prediction.get("student_id"),
+        "student_name": prediction.get("student_name", "Student"),
+        "class_id": class_id,
+        "class_name": class_names.get(class_id, class_id or "Class"),
+        "instructor": instructor,
+        "semester": (class_meta.get(class_id) or {}).get("semester") or "Unassigned",
+        "risk_level": prediction.get("risk_level", "low"),
+        "confidence": confidence,
+        "model_confidence": confidence,
+        "generated_at": generated_at,
+        "predicted_at": predicted_at,
+        "risk_probability": prediction.get("risk_probability", 0),
+        "risk_probabilities": prediction_probabilities_value(prediction),
+        "risk_score": prediction.get("risk_score", 0),
+        "engagement_status": prediction.get("engagement_status"),
+        "academic_status": prediction.get("academic_status"),
+        "status": prediction_report_status(prediction.get("risk_level")),
+        "attendance": prediction_feature_value(features, "attendance_rate"),
+        "participation": prediction_feature_value(features, "participation_rate", "answer_rate"),
+        "correctness": prediction_feature_value(features, "correctness_rate"),
+        "engagement": prediction_feature_value(features, "engagement_score"),
+        "semantic_score": prediction_feature_value(features, "semantic_score", "average_semantic_score"),
+        "engagement_index": prediction.get("engagement_index", prediction.get("derived_engagement_index", prediction.get("predicted_score", 0))),
+        "risk_reasons": risk_reasons,
+        "weak_concepts": bloom_gaps,
+        "recommended_actions": prediction.get("recommended_actions") or prediction.get("recommendations") or [],
+        "feature_importance": [
+            item
+            for item in (prediction.get("feature_importance") or [])
+            if item.get("feature") in PREDICTION_FEATURE_COLUMNS
+        ],
+        "features": features,
+        "model_feature_values": prediction.get("model_feature_values") or {
+            name: prediction_feature_value(features, name)
+            for name in PREDICTION_FEATURE_COLUMNS
+        },
+        "engagement_context": prediction.get("engagement_context") or engagement_context(features),
+        "previous_prediction": previous_prediction_snapshot(prediction.get("previous_prediction")),
+        "prediction_trend": prediction_trend_payload(prediction),
+        "explanation": explain_prediction(display_prediction),
+    }
 
 
 def feature_risk_score(feature: dict) -> float:
@@ -352,14 +817,28 @@ async def build_prediction_features_for_class(db: AsyncIOMotorDatabase, class_id
 
         concept_totals: dict[str, list[int]] = defaultdict(list)
         for response in student_responses:
-            concept = question_concept(questions_by_id.get(response.get("question_id")))
-            concept_totals[concept].append(1 if response_is_correct(response) else 0)
+            concept = question_bloom_level(questions_by_id.get(response.get("question_id")))
+            if concept:
+                concept_totals[concept].append(1 if response_is_correct(response) else 0)
         concept_correctness_map = {
             concept: round(sum(values) / len(values), 4)
             for concept, values in concept_totals.items()
             if values
         }
-        weak_concepts = [concept for concept, value in concept_correctness_map.items() if value < 0.6]
+        concept_answer_counts = {concept: len(values) for concept, values in concept_totals.items() if values}
+        concept_correct_answer_counts = {concept: sum(values) for concept, values in concept_totals.items() if values}
+        bloom_mastery_by_level = bloom_mastery_by_level_value(
+            {
+                "concept_correctness_map": concept_correctness_map,
+                "concept_answer_counts": concept_answer_counts,
+                "concept_correct_answer_counts": concept_correct_answer_counts,
+            }
+        )
+        weak_concepts = [
+            concept
+            for concept, row in bloom_mastery_by_level.items()
+            if row["is_mastery_gap"]
+        ]
 
         event_dates = [as_datetime(row.get("created_at")) for row in student_events]
         response_dates = [as_datetime(row.get("submitted_at")) for row in student_responses]
@@ -432,6 +911,9 @@ async def build_prediction_features_for_class(db: AsyncIOMotorDatabase, class_id
             "weak_concepts": weak_concepts,
             "weakest_concept": min(concept_correctness_map, key=concept_correctness_map.get) if concept_correctness_map else None,
             "concept_correctness_map": concept_correctness_map,
+            "concept_answer_counts": concept_answer_counts,
+            "concept_correct_answer_counts": concept_correct_answer_counts,
+            "bloom_mastery_by_level": bloom_mastery_by_level,
             "feature_schema_version": FEATURE_SCHEMA_VERSION,
             "generated_at": generated_at,
         }
@@ -477,8 +959,8 @@ def fallback_prediction(feature: dict, class_averages: dict[str, float]) -> dict
     if int(feature.get("recent_activity_count") or 0) == 0:
         reasons.append("No recent learning activity")
     if int(feature.get("weak_concepts_count") or 0) > 0:
-        concept = feature.get("weakest_concept") or "a recent concept"
-        reasons.append(f"Weak performance in {concept}")
+        concept = feature.get("weakest_concept") or "a recent Bloom level"
+        reasons.append(f"Bloom mastery below threshold in {concept}")
         actions.append(f"Review {concept} with an extra explanation or example")
     if not reasons:
         reasons.append("Learning signals are currently steady")
@@ -515,6 +997,7 @@ def ml_prediction(feature: dict, model_bundle: Any) -> dict | None:
     if not model_bundle:
         return None
     try:
+        normalized_feature = normalize_inference_features(feature)
         feature_columns = [
             column
             for column in (model_bundle.feature_columns or PREDICTION_FEATURE_COLUMNS)
@@ -523,7 +1006,7 @@ def ml_prediction(feature: dict, model_bundle: Any) -> dict | None:
         if feature_columns != PREDICTION_FEATURE_COLUMNS:
             return None
         risk_labels = model_bundle.risk_labels or ["low", "medium", "high"]
-        vector = [feature_vector(feature, feature_columns)]
+        vector = [feature_vector(normalized_feature, feature_columns)]
         model = model_bundle.model
         probabilities = []
         if hasattr(model, "predict_proba"):
@@ -535,13 +1018,13 @@ def ml_prediction(feature: dict, model_bundle: Any) -> dict | None:
         except (TypeError, ValueError, IndexError):
             risk_level = str(raw_prediction).lower().replace(" risk", "")
             predicted_index = risk_labels.index(risk_level) if risk_level in risk_labels else 0
-        per_student_confidence = feature_based_confidence(feature, risk_level)
+        per_student_confidence = feature_based_confidence(normalized_feature, risk_level)
         if not probabilities:
             probabilities = conservative_probabilities(predicted_index, len(risk_labels), per_student_confidence)
         probabilities = soften_extreme_probabilities(probabilities, predicted_index, per_student_confidence)
         weights = {"low": 15.0, "medium": 55.0, "high": 90.0}
         risk_score = clamp(sum(probabilities[index] * weights.get(label, 50.0) for index, label in enumerate(risk_labels)))
-        engagement_index = derived_engagement_index(feature)
+        engagement_index = derived_engagement_index(normalized_feature)
         high_risk_probability = probabilities[risk_labels.index("high")] if "high" in risk_labels else max(probabilities)
         elevated_risk_probability = sum(
             probabilities[index]
@@ -565,7 +1048,7 @@ def ml_prediction(feature: dict, model_bundle: Any) -> dict | None:
             "academic_status": academic_status_from_risk(risk_level),
             "engagement_status": engagement_status_from_index(engagement_index),
             "risk_level": risk_level,
-            "engagement_trend": engagement_trend_from_delta(float(feature.get("engagement_trend_delta") or 0)),
+            "engagement_trend": engagement_trend_from_delta(float(normalized_feature.get("engagement_trend_delta") or 0)),
             "confidence": round(confidence, 4),
             "model_type": model_bundle.model_type,
             "risk_reasons": reasons,
@@ -601,9 +1084,9 @@ def prediction_reasons(row: dict) -> list[str]:
 RISK_DRIVER_LABELS = {
     "attendance_rate": "Attendance",
     "correctness_rate": "Correctness",
-    # Backward-compatible field name. The frontend presents this as Bloom
-    # cognitive skills because current values are Bloom taxonomy levels.
-    "weak_concepts_count": "Weak Concepts",
+    # Backward-compatible feature name. This is a descriptive Bloom mastery
+    # feature derived from answer correctness, not a model-predicted Bloom level.
+    "weak_concepts_count": "Bloom Mastery Gaps",
     "participation_rate": "Participation",
     "semantic_score": "Semantic Score",
     "engagement_score": "Engagement",
@@ -621,48 +1104,116 @@ def driver_label(feature_name: str) -> str:
     return feature_name.replace("_", " ").title()
 
 
-def top_risk_drivers(results: list[dict]) -> list[dict]:
-    scores: Counter[str] = Counter()
-    source = "risk_scoring_priorities"
-    for row in results:
-        for item in row.get("feature_importance") or []:
-            feature = str(item.get("feature") or "").strip()
-            if not feature:
-                continue
-            if feature not in PREDICTION_FEATURE_COLUMNS:
+def prediction_signal_value(row: dict, *names: str) -> float:
+    sources = [row.get("features") or {}, row.get("model_feature_values") or {}, row]
+    for source in sources:
+        for name in names:
+            value = source.get(name)
+            if value is None:
                 continue
             try:
-                value = float(item.get("importance") or 0)
+                return float(value)
             except (TypeError, ValueError):
-                value = 0
-            if value <= 0:
                 continue
-            source = "xgboost_feature_importance"
-            scores[driver_label(feature)] += value
+    return 0.0
 
-    if not scores:
-        scores.update(
-            {
-                "Attendance": 35,
-                "Correctness": 35,
-                "Weak Concepts": 24,
-                "Participation": 20,
-                "Engagement Trend": 12,
-            }
-        )
 
-    max_score = max(scores.values() or [1])
-    preferred_order = ["Attendance", "Correctness", "Weak Concepts", "Participation", "Engagement Trend"]
+def student_risk_factors(row: dict) -> set[str]:
+    factors: set[str] = set()
+    attendance = prediction_signal_value(row, "attendance_rate")
+    participation = prediction_signal_value(row, "participation_rate", "answer_rate")
+    correctness = prediction_signal_value(row, "correctness_rate")
+    engagement = prediction_signal_value(row, "engagement_score", "engagement_index", "derived_engagement_index")
+    recent_activity = prediction_signal_value(row, "recent_activity_count", "activity_last_7_days")
+    weak_concepts = len(tested_bloom_gap_levels(row.get("features") or row))
+    response_time = prediction_signal_value(row, "response_time", "average_response_time")
+
+    if engagement < 60:
+        factors.add("Low engagement")
+    if attendance < 60:
+        factors.add("Poor attendance")
+    if correctness < 60:
+        factors.add("Low correctness")
+    if participation < 60:
+        factors.add("Low participation")
+    if recent_activity <= 0:
+        factors.add("Recent inactivity")
+    if weak_concepts > 0:
+        factors.add("Bloom mastery gaps")
+    if response_time > 90:
+        factors.add("Slow response behavior")
+    return factors
+
+
+def top_risk_drivers(results: list[dict]) -> list[dict]:
+    flagged = [row for row in results if row.get("risk_level") in {"medium", "high"}]
+    if not flagged:
+        return []
+
+    affected_students: dict[str, set[str]] = defaultdict(set)
+    for row in flagged:
+        student_id = str(row.get("student_id") or row.get("prediction_id") or "")
+        for factor in student_risk_factors(row):
+            affected_students[factor].add(student_id)
+
+    total = len(flagged)
+    preferred_order = [
+        "Low engagement",
+        "Poor attendance",
+        "Bloom mastery gaps",
+        "Low correctness",
+        "Low participation",
+        "Recent inactivity",
+        "Slow response behavior",
+    ]
     rows = [
         {
             "driver": label,
-            "importance": round(value, 4),
-            "percentage": round((value / max_score) * 100, 1),
-            "source": source,
+            "affected_students": len(students),
+            "total_flagged_students": total,
+            "percentage": round((len(students) / total) * 100, 1),
+            "source": "flagged_student_indicators",
+            "calculation": "Percentage of medium/high risk students with this learning indicator.",
         }
-        for label, value in scores.items()
+        for label, students in affected_students.items()
+        if students
     ]
-    return sorted(rows, key=lambda row: (-row["importance"], preferred_order.index(row["driver"]) if row["driver"] in preferred_order else 99))[:5]
+    return sorted(rows, key=lambda row: (-row["percentage"], preferred_order.index(row["driver"]) if row["driver"] in preferred_order else 99))[:5]
+
+
+def prediction_diagnostics_enabled() -> bool:
+    environment = str(os.getenv("ENV") or os.getenv("APP_ENV") or "").strip().lower()
+    debug_flag = str(os.getenv("PREDICTION_DEBUG") or "").strip().lower()
+    return environment in {"development", "dev", "local"} or debug_flag in {"1", "true", "yes", "on"}
+
+
+def numeric_distribution(values: list[float]) -> dict[str, float | None]:
+    clean = [float(value) for value in values if isinstance(value, (int, float))]
+    if not clean:
+        return {"min": None, "mean": None, "max": None}
+    return {
+        "min": round(min(clean), 2),
+        "mean": round(mean(clean), 2),
+        "max": round(max(clean), 2),
+    }
+
+
+def log_inference_normalization_diagnostics(class_id: str, results: list[dict]) -> None:
+    if not prediction_diagnostics_enabled():
+        return
+    counts = Counter(str(row.get("risk_level") or "").lower() for row in results)
+    model_features = [row.get("model_feature_values") or {} for row in results]
+    logger.info(
+        "Prediction normalization diagnostics for class %s: counts=%s response_time=%s semantic_score=%s",
+        class_id,
+        {
+            "low": counts.get("low", 0),
+            "medium": counts.get("medium", 0),
+            "high": counts.get("high", 0),
+        },
+        numeric_distribution([row.get("response_time") for row in model_features]),
+        numeric_distribution([row.get("semantic_score") for row in model_features]),
+    )
 
 
 def log_identical_confidence_if_needed(class_id: str, results: list[dict]) -> None:
@@ -693,7 +1244,7 @@ def teaching_action_label(action: str) -> str:
     if "reinforcement" in normalized or "practice" in normalized or "activity" in normalized:
         return "Assign reinforcement activity"
     if "review" in normalized or "revisit" in normalized or "concept" in normalized:
-        return "Review weak concepts"
+        return "Review Bloom-level mastery"
     if "example" in normalized or "explanation" in normalized:
         return "Provide additional examples"
     return action
@@ -713,14 +1264,14 @@ def recommendation_summary(results: list[dict], weak_concepts: list[dict]) -> li
     for concept in weak_concepts:
         if concept.get("concept"):
             concept_name = str(concept["concept"]).strip()
-            label = f"Review {concept_name} concepts"
+            label = f"Review Bloom-level mastery in {concept_name}"
             actions[label] += int(concept.get("weak_students_count") or 0)
             affected_students[label].update(str(student_id) for student_id in concept.get("affected_students") or [])
 
     preferred = [
         "Monitor participation in the next session",
         "Schedule a check-in with struggling students",
-        "Review weak concepts",
+        "Review Bloom-level mastery",
         "Assign reinforcement activity",
         "Provide additional examples",
     ]
@@ -732,31 +1283,55 @@ def recommendation_summary(results: list[dict], weak_concepts: list[dict]) -> li
 
 
 async def detect_weak_concepts(db: AsyncIOMotorDatabase, class_id: str, features: list[dict]) -> list[dict]:
-    concepts: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    concepts: dict[str, list[dict]] = defaultdict(list)
     for feature in features:
         for concept, correctness in feature.get("concept_correctness_map", {}).items():
-            concepts[concept].append((feature["student_id"], float(correctness)))
+            if str(concept).strip().lower() in BLOOM_LEVEL_LABELS:
+                answered = int((feature.get("concept_answer_counts") or {}).get(concept) or 0)
+                correct = int((feature.get("concept_correct_answer_counts") or {}).get(concept) or 0)
+                if answered <= 0:
+                    continue
+                concepts[concept].append(
+                    {
+                        "student_id": feature["student_id"],
+                        "questions_answered": answered,
+                        "correct_answers": correct,
+                        "mastery_rate": percent(correct, answered),
+                    }
+                )
 
     generated_at = utc_now()
     docs = []
     for concept, rows in concepts.items():
         if not rows:
             continue
-        avg_correctness = round(sum(value for _student_id, value in rows) / len(rows), 4)
-        affected = [student_id for student_id, value in rows if value < 0.6]
-        if not affected:
+        total_questions_answered = sum(row["questions_answered"] for row in rows)
+        correct_answers = sum(row["correct_answers"] for row in rows)
+        mastery_rate = percent(correct_answers, total_questions_answered)
+        affected = [row["student_id"] for row in rows if row["mastery_rate"] < MASTERY_THRESHOLD]
+        if mastery_rate >= MASTERY_THRESHOLD and not affected:
             continue
-        risk_level = "high" if avg_correctness < 0.45 or len(affected) >= 3 else "medium"
+        status = bloom_mastery_status(mastery_rate)
+        risk_level = "high" if status == "Needs Improvement" else "medium"
         docs.append(
             {
                 "weak_concept_prediction_id": f"weak_concept_{class_id}_{concept.lower().replace(' ', '_')}",
                 "class_id": class_id,
                 "concept": concept,
-                "average_correctness": avg_correctness,
+                "bloom_level": concept,
+                "total_questions_answered": total_questions_answered,
+                "correct_answers": correct_answers,
+                "mastery_rate": mastery_rate,
+                "mastery_threshold": MASTERY_THRESHOLD,
+                "mastery_status": status,
+                "average_correctness": round(mastery_rate / 100, 4),
                 "weak_students_count": len(affected),
+                "affected_students_count": len(affected),
                 "affected_students": affected,
+                "affected_classes": 1 if mastery_rate < MASTERY_THRESHOLD else 0,
                 "risk_level": risk_level,
                 "recommended_action": f"Revisit {concept} with a short example and follow-up question",
+                "source": "descriptive_bloom_mastery",
                 "generated_at": generated_at,
             }
         )
@@ -770,6 +1345,20 @@ async def detect_weak_concepts(db: AsyncIOMotorDatabase, class_id: str, features
 async def run_prediction_pipeline_for_class(db: AsyncIOMotorDatabase, class_id: str) -> dict:
     features = await build_prediction_features_for_class(db, class_id)
     generated_at = utc_now()
+    existing_predictions = [
+        serialize_document(row)
+        for row in await db[MongoCollections.prediction_results].find({"class_id": class_id}).to_list(length=None)
+    ]
+    previous_by_student: dict[str, dict] = {}
+    for row in existing_predictions:
+        student_id = row.get("student_id")
+        if not student_id:
+            continue
+        current_date = as_datetime(row.get("generated_at") or row.get("predicted_at")) or datetime.min.replace(tzinfo=timezone.utc)
+        existing = previous_by_student.get(student_id)
+        existing_date = as_datetime(existing.get("generated_at") or existing.get("predicted_at")) if existing else None
+        if not existing or current_date >= (existing_date or datetime.min.replace(tzinfo=timezone.utc)):
+            previous_by_student[student_id] = row
     await db[MongoCollections.prediction_features].delete_many({"class_id": class_id})
     if features:
         await db[MongoCollections.prediction_features].insert_many(features)
@@ -778,7 +1367,9 @@ async def run_prediction_pipeline_for_class(db: AsyncIOMotorDatabase, class_id: 
     averages = class_average_features(features)
     results = []
     for feature in features:
+        normalized_feature = normalize_inference_features(feature)
         prediction = ml_prediction(feature, model_bundle) or fallback_prediction(feature, averages)
+        confidence = predicted_class_confidence(prediction)
         results.append(
             {
                 "prediction_id": f"prediction_{feature['student_id']}_{class_id}",
@@ -791,7 +1382,7 @@ async def run_prediction_pipeline_for_class(db: AsyncIOMotorDatabase, class_id: 
                 "risk_probabilities": prediction.get("risk_probabilities"),
                 "risk_score": prediction["risk_score"],
                 "risk_level": prediction["risk_level"],
-                "confidence": prediction["confidence"],
+                "confidence": confidence,
                 "engagement_status": prediction["engagement_status"],
                 "academic_status": prediction["academic_status"],
                 "engagement_trend": prediction["engagement_trend"],
@@ -799,16 +1390,17 @@ async def run_prediction_pipeline_for_class(db: AsyncIOMotorDatabase, class_id: 
                 "risk_reasons": prediction["risk_reasons"],
                 "recommended_actions": prediction["recommended_actions"],
                 "feature_importance": prediction["feature_importance"],
-                "model_feature_values": model_feature_values(feature),
+                "model_feature_values": model_feature_values(normalized_feature),
                 "engagement_context": engagement_context(feature),
                 # Compatibility aliases. The score is a behavioral engagement index,
                 # not a predicted exam mark.
                 "predicted_score": prediction["engagement_index"],
                 "predicted_performance": prediction["engagement_index"],
                 "performance_level": prediction["performance_level"],
-                "model_confidence": prediction["confidence"],
+                "model_confidence": confidence,
                 "reasons": prediction["risk_reasons"],
                 "features": feature,
+                "previous_prediction": previous_prediction_snapshot(previous_by_student.get(feature["student_id"])),
                 "feature_schema_version": FEATURE_SCHEMA_VERSION,
                 "generated_at": generated_at,
                 "predicted_at": generated_at,
@@ -818,6 +1410,7 @@ async def run_prediction_pipeline_for_class(db: AsyncIOMotorDatabase, class_id: 
     await db[MongoCollections.prediction_results].delete_many({"class_id": class_id})
     if results:
         log_identical_confidence_if_needed(class_id, results)
+        log_inference_normalization_diagnostics(class_id, results)
         await db[MongoCollections.prediction_results].insert_many(results)
     weak_concepts = await detect_weak_concepts(db, class_id, features)
 
@@ -848,13 +1441,26 @@ async def run_prediction_pipeline_for_class(db: AsyncIOMotorDatabase, class_id: 
 
 async def class_prediction_summary(db: AsyncIOMotorDatabase, class_id: str) -> dict:
     results = [serialize_document(row) for row in await db[MongoCollections.prediction_results].find({"class_id": class_id}).to_list(length=None)]
+    for row in results:
+        confidence = predicted_class_confidence(row)
+        row["confidence"] = confidence
+        row["model_confidence"] = confidence
+    class_doc = serialize_document(await db[MongoCollections.classes].find_one({"class_id": class_id}) or {})
+    class_names = {class_id: class_doc.get("name") or class_doc.get("class_name") or class_id}
+    class_meta = {class_id: class_doc}
+    student_reports = [
+        prediction_report_payload(row, class_names=class_names, class_meta=class_meta)
+        for row in sorted(results, key=lambda item: (str(item.get("student_name") or ""), str(item.get("student_id") or "")))
+    ]
     weak_concepts = [serialize_document(row) for row in await db[MongoCollections.weak_concept_predictions].find({"class_id": class_id}).sort("weak_students_count", -1).to_list(length=20)]
-    at_risk = [row for row in results if row.get("risk_level") in {"medium", "high"}]
+    at_risk = [row for row in student_reports if row.get("risk_level") in {"medium", "high"}]
     generated_at = max([as_datetime(row.get("generated_at")) for row in results if as_datetime(row.get("generated_at"))] or [None])
     trends = Counter(row.get("engagement_trend", "stable") for row in results)
     return {
         "class_id": class_id,
         "risk_distribution": risk_distribution(results),
+        "predictions": student_reports,
+        "student_reports": student_reports,
         "at_risk_students": sorted(at_risk, key=lambda row: row.get("risk_score", 0), reverse=True)[:20],
         "weak_concepts": weak_concepts,
         "engagement_trends": dict(trends),
@@ -874,9 +1480,16 @@ async def student_prediction(db: AsyncIOMotorDatabase, student_id: str, class_id
     if not row:
         return {"student_id": student_id, "class_id": class_id, "empty": True}
     clean = serialize_document(row)
+    class_doc = serialize_document(await db[MongoCollections.classes].find_one({"class_id": class_id}) or {})
+    clean = prediction_report_payload(
+        clean,
+        class_names={class_id: class_doc.get("name") or class_doc.get("class_name") or class_id},
+        class_meta={class_id: class_doc},
+    )
     level = clean.get("risk_level", "low")
     clean["risk_reasons"] = prediction_reasons(clean)
-    clean["confidence"] = clean.get("confidence", clean.get("model_confidence", 0))
+    clean["confidence"] = predicted_class_confidence(clean)
+    clean["model_confidence"] = clean["confidence"]
     clean["engagement_index"] = clean.get("engagement_index", clean.get("derived_engagement_index", clean.get("predicted_score", 0)))
     clean["derived_engagement_index"] = clean.get("derived_engagement_index", clean["engagement_index"])
     clean["engagement_status"] = clean.get("engagement_status", engagement_status_from_index(float(clean["engagement_index"] or 0)))
@@ -896,7 +1509,11 @@ async def admin_prediction_overview(db: AsyncIOMotorDatabase) -> dict:
         for row in results
         if row.get("class_id") and row.get("engagement_trend") == "declining"
     }
-    weak_classes = {row.get("class_id") for row in weak_concepts if row.get("class_id") and row.get("risk_level") == "high"}
+    weak_classes = {
+        row.get("class_id")
+        for row in weak_concepts
+        if row.get("class_id") and float(row.get("mastery_rate") if row.get("mastery_rate") is not None else float(row.get("average_correctness") or 0) * 100) < MASTERY_THRESHOLD
+    }
     recent_alerts = sorted(
         [
             {

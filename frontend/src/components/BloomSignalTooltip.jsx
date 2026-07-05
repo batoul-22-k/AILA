@@ -1,6 +1,6 @@
 import { Info } from "lucide-react";
 
-const BLOOM_TOOLTIP_TEXT = "Bloom cognitive skills represent the level of thinking demonstrated by students (e.g., Remember, Understand, Apply, Analyze, Evaluate, Create). Lower performance at these levels contributes to the academic risk prediction.";
+const BLOOM_TOOLTIP_TEXT = "Only Bloom levels with answered questions are evaluated. Untested levels are not counted as mastery gaps.";
 
 export function BloomSignalTooltip({ text = BLOOM_TOOLTIP_TEXT, className = "" }) {
   return (

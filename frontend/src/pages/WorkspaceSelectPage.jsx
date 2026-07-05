@@ -157,7 +157,7 @@ export function WorkspaceSelectPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button type="button" variant="ghost" size="sm" aria-label="Notifications">
+            <Button type="button" variant="ghost" size="icon" aria-label="Notifications" title="Notifications">
               <Bell size={17} />
             </Button>
             <div ref={accountMenuRef} className="relative">

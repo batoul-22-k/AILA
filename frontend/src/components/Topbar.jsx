@@ -1,4 +1,4 @@
-import { Bell, BookOpen, CheckCheck, ChevronDown, LogOut, Menu, Search, Settings, UserRound } from "lucide-react";
+import { Bell, BookOpen, CheckCheck, ChevronDown, LogOut, Search, Settings, UserRound } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -23,7 +23,7 @@ const notificationTone = {
   info: "bg-role-primary",
 };
 
-export function Topbar({ role, onMenuClick }) {
+export function Topbar({ role }) {
   const [accountOpen, setAccountOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -148,9 +148,6 @@ export function Topbar({ role, onMenuClick }) {
     <header className="role-topbar sticky top-0 z-30 border-b backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/90">
       <div className="flex min-h-16 items-center justify-between gap-3 px-3 sm:px-5 lg:px-8">
         <div className="flex min-w-0 items-center gap-3">
-          <Button className="lg:hidden" variant="ghost" size="sm" type="button" onClick={onMenuClick} aria-label="Open navigation">
-            <Menu size={18} />
-          </Button>
           <span className={"grid h-10 w-10 place-items-center rounded-full lg:hidden"}>
             <AilaIcon className="h-7 w-7" />
           </span>
@@ -196,11 +193,11 @@ export function Topbar({ role, onMenuClick }) {
         )}
 
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" type="button" aria-label="Appearance settings" title="Appearance settings" onClick={openAppearanceSettings}>
+          <Button variant="ghost" size="icon" type="button" aria-label="Appearance settings" title="Appearance settings" onClick={openAppearanceSettings}>
             <Settings size={17} />
           </Button>
           <div ref={notificationsRef} className="relative">
-            <Button variant="ghost" size="sm" type="button" aria-label="Notifications" onClick={handleNotificationsToggle}>
+            <Button variant="ghost" size="icon" type="button" aria-label="Notifications" title="Notifications" onClick={handleNotificationsToggle}>
               <span className="relative">
                 <Bell size={17} />
                 {unreadCount > 0 && (

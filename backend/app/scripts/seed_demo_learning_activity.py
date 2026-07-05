@@ -11,8 +11,9 @@ import asyncio
 import os
 import random
 import sys
+from collections import Counter
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -27,9 +28,16 @@ DEMO_SEMESTER = "Spring 2026"
 DEMO_DEPARTMENT = "Demo Learning Analytics"
 SESSION_COUNT = 8
 QUESTIONS_PER_SESSION = 4
-MIN_STUDENTS_PER_CLASS = 6
+MIN_STUDENTS_PER_CLASS = 12
 
 BLOOM_LEVELS = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"]
+RISK_LEVELS = ["low", "medium", "high"]
+DEMO_TREND_TARGET_RATIOS = {
+    "stable": 0.30,
+    "improved": 0.30,
+    "worsened": 0.30,
+    "initial": 0.10,
+}
 DEMO_CLASS_NAMES = [
     "Business Analytics",
     "SQL Database",
@@ -43,21 +51,143 @@ DEMO_CLASS_NAMES = [
 @dataclass(frozen=True)
 class ClassProfile:
     name: str
+    archetype: str
     attendance: float
     participation: float
     correctness: float
     semantic_quality: float
+    response_time: float
     recent_boost: float
+    trend: float
+    bloom_focus: tuple[str, ...]
     weak_levels: tuple[str, ...]
+    persona_mix: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class StudentPersona:
+    name: str
+    attendance_delta: float
+    participation_delta: float
+    correctness_delta: float
+    semantic_delta: float
+    response_time_delta: float
+    trend: float
+    volatility: float = 0.04
 
 
 CLASS_PROFILES = [
-    ClassProfile("Healthy class", 0.94, 0.88, 0.84, 0.86, 1.0, ("Create",)),
-    ClassProfile("Attention class", 0.74, 0.68, 0.58, 0.62, 0.75, ("Apply", "Analyze")),
-    ClassProfile("Critical/low activity class", 0.42, 0.38, 0.34, 0.38, 0.35, ("Understand", "Apply", "Analyze")),
-    ClassProfile("Mixed class", 0.72, 0.64, 0.63, 0.66, 0.7, ("Apply", "Evaluate")),
-    ClassProfile("High attendance but low correctness", 0.93, 0.82, 0.39, 0.44, 0.8, ("Analyze", "Evaluate")),
-    ClassProfile("Low attendance but high correctness", 0.46, 0.76, 0.82, 0.84, 0.45, ("Remember",)),
+    ClassProfile(
+        "Excellent class",
+        "excellent",
+        0.97,
+        0.92,
+        0.92,
+        0.92,
+        30,
+        1.0,
+        0.03,
+        ("Apply", "Analyze", "Evaluate"),
+        ("Evaluate",),
+        ("excellent", "quiet_strong", "slow_accurate", "improving", "average", "active_inaccurate"),
+    ),
+    ClassProfile(
+        "Healthy class",
+        "healthy",
+        0.95,
+        0.9,
+        0.88,
+        0.88,
+        32,
+        1.0,
+        0.025,
+        ("Understand", "Apply", "Analyze"),
+        ("Analyze",),
+        ("excellent", "quiet_strong", "slow_accurate", "improving", "average", "active_inaccurate"),
+    ),
+    ClassProfile(
+        "Average class",
+        "average",
+        0.78,
+        0.7,
+        0.68,
+        0.7,
+        48,
+        0.86,
+        0.0,
+        ("Understand", "Apply"),
+        ("Apply",),
+        ("average", "average", "quiet_strong", "active_inaccurate", "improving", "declining", "slow_accurate"),
+    ),
+    ClassProfile(
+        "Challenging class",
+        "challenging",
+        0.68,
+        0.62,
+        0.56,
+        0.58,
+        62,
+        0.74,
+        -0.02,
+        ("Apply", "Analyze", "Evaluate"),
+        ("Analyze", "Evaluate"),
+        ("average", "active_inaccurate", "declining", "frequently_absent", "struggling", "fast_careless"),
+    ),
+    ClassProfile(
+        "At-risk class",
+        "at_risk",
+        0.5,
+        0.48,
+        0.42,
+        0.45,
+        78,
+        0.58,
+        -0.04,
+        ("Remember", "Understand", "Apply"),
+        ("Understand", "Apply", "Analyze"),
+        ("struggling", "frequently_absent", "declining", "fast_careless", "active_inaccurate", "average"),
+    ),
+    ClassProfile(
+        "Mixed classroom",
+        "mixed",
+        0.76,
+        0.66,
+        0.6,
+        0.65,
+        58,
+        0.78,
+        0.0,
+        ("Analyze", "Evaluate", "Create"),
+        ("Evaluate", "Create"),
+        ("excellent", "quiet_strong", "average", "active_inaccurate", "frequently_absent", "struggling"),
+    ),
+]
+
+
+STUDENT_PERSONAS = {
+    "excellent": StudentPersona("Excellent student", 0.04, 0.05, 0.05, 0.05, -8, 0.01, 0.02),
+    "quiet_strong": StudentPersona("Quiet but strong", 0.03, -0.18, 0.07, 0.06, 4, 0.0, 0.025),
+    "active_inaccurate": StudentPersona("Active but inaccurate", 0.03, 0.08, -0.22, -0.2, -7, -0.005, 0.05),
+    "improving": StudentPersona("Improving student", -0.04, -0.03, -0.06, -0.05, 3, 0.16, 0.04),
+    "declining": StudentPersona("Declining student", 0.0, -0.02, -0.03, -0.03, 6, -0.18, 0.05),
+    "frequently_absent": StudentPersona("Frequently absent", -0.28, -0.1, -0.08, -0.08, 10, -0.03, 0.05),
+    "fast_careless": StudentPersona("Fast but careless", 0.01, 0.04, -0.18, -0.16, -22, -0.02, 0.055),
+    "slow_accurate": StudentPersona("Slow but accurate", 0.02, -0.04, 0.05, 0.05, 28, 0.0, 0.025),
+    "average": StudentPersona("Average student", 0.0, 0.0, 0.0, 0.0, 0, 0.0, 0.04),
+    "struggling": StudentPersona("Struggling student", -0.14, -0.12, -0.2, -0.18, 18, -0.05, 0.06),
+}
+
+
+COURSE_PROFILE_HINTS = [
+    (("java", "programming"), "excellent"),
+    (("network",), "average"),
+    (("communication",), "healthy"),
+    (("visualization", "dashboard"), "healthy"),
+    (("data science",), "healthy"),
+    (("software", "engineering"), "average"),
+    (("sql", "database"), "challenging"),
+    (("information systems", "systems"), "at_risk"),
+    (("business", "analytics"), "mixed"),
 ]
 
 
@@ -104,6 +234,231 @@ def percent(value: float) -> float:
     return round(clamp(value) * 100, 2)
 
 
+def normalize_demo_risk_level(value: Any) -> str:
+    normalized = str(value or "low").strip().lower().replace(" risk", "")
+    return normalized if normalized in RISK_LEVELS else "low"
+
+
+def supported_demo_trend_states(current_risk_level: str) -> list[str]:
+    current = normalize_demo_risk_level(current_risk_level)
+    states = ["stable", "initial"]
+    if current != "low":
+        states.append("worsened")
+    if current != "high":
+        states.append("improved")
+    return states
+
+
+def previous_risk_level_for_demo_trend(current_risk_level: str, trend_state: str) -> str | None:
+    current = normalize_demo_risk_level(current_risk_level)
+    if trend_state == "initial":
+        return None
+    if trend_state == "stable":
+        return current
+    current_index = RISK_LEVELS.index(current)
+    if trend_state == "improved" and current_index < len(RISK_LEVELS) - 1:
+        return RISK_LEVELS[current_index + 1]
+    if trend_state == "worsened" and current_index > 0:
+        return RISK_LEVELS[current_index - 1]
+    return current
+
+
+def demo_trend_target_counts(total_predictions: int) -> dict[str, int]:
+    if total_predictions <= 0:
+        return {state: 0 for state in DEMO_TREND_TARGET_RATIOS}
+    initial = max(1, -(-total_predictions // 10))
+    remaining = max(0, total_predictions - initial)
+    base = remaining // 3
+    targets = {"stable": base, "improved": base, "worsened": base, "initial": initial}
+    for state in ("stable", "improved", "worsened"):
+        if sum(targets.values()) >= total_predictions:
+            break
+        targets[state] += 1
+    return targets
+
+
+def choose_demo_trend_state(current_risk_level: str, counts: Counter[str], targets: dict[str, int]) -> str:
+    supported = supported_demo_trend_states(current_risk_level)
+    under_target = [state for state in supported if counts[state] < targets.get(state, 0)]
+    candidates = under_target or supported
+
+    def state_score(state: str) -> tuple[float, int]:
+        target = max(targets.get(state, 0), 1)
+        remaining = targets.get(state, 0) - counts[state]
+        return (remaining / target, -1 if state == "initial" else 0)
+
+    return max(candidates, key=state_score)
+
+
+def preferred_demo_trend_candidate(predictions: list[dict], trend_state: str, prefer_support: bool = True) -> dict | None:
+    candidates = [
+        row
+        for row in predictions
+        if trend_state in supported_demo_trend_states(row.get("risk_level"))
+    ]
+    if not candidates:
+        return None
+    return sorted(
+        candidates,
+        key=lambda row: (
+            (normalize_demo_risk_level(row.get("risk_level")) not in {"medium", "high"})
+            if prefer_support
+            else (normalize_demo_risk_level(row.get("risk_level")) in {"medium", "high"}),
+            str(row.get("student_id") or ""),
+            str(row.get("prediction_id") or ""),
+        ),
+    )[0]
+
+
+def demo_previous_risk_score(previous_level: str, current_score: float, row_index: int) -> float:
+    ranges = {
+        "low": (12.0, 36.0),
+        "medium": (52.0, 70.0),
+        "high": (82.0, 94.0),
+    }
+    low, high = ranges[normalize_demo_risk_level(previous_level)]
+    offset = ((row_index * 7) % 11) - 5
+    if low <= current_score <= high:
+        return round(max(low, min(high, current_score + offset)), 2)
+    midpoint = (low + high) / 2
+    return round(max(low, min(high, midpoint + offset)), 2)
+
+
+def demo_previous_probabilities(previous_level: str) -> dict[str, float]:
+    level = normalize_demo_risk_level(previous_level)
+    if level == "high":
+        return {"low": 0.04, "medium": 0.16, "high": 0.80}
+    if level == "medium":
+        return {"low": 0.18, "medium": 0.68, "high": 0.14}
+    return {"low": 0.82, "medium": 0.14, "high": 0.04}
+
+
+def demo_previous_prediction_payload(prediction: dict, trend_state: str, row_index: int) -> dict | None:
+    previous_level = previous_risk_level_for_demo_trend(prediction.get("risk_level"), trend_state)
+    if previous_level is None:
+        return None
+
+    generated_at = prediction.get("generated_at") or prediction.get("predicted_at")
+    if not isinstance(generated_at, datetime):
+        generated_at = datetime.now(timezone.utc)
+    previous_at = generated_at - timedelta(days=14)
+    current_score = float(prediction.get("risk_score") or 0)
+    previous_score = demo_previous_risk_score(previous_level, current_score, row_index)
+    probabilities = demo_previous_probabilities(previous_level)
+    confidence = probabilities[previous_level]
+    return {
+        "prediction_id": f"previous_{prediction.get('prediction_id') or row_index}",
+        "student_id": prediction.get("student_id"),
+        "student_name": prediction.get("student_name", "Student"),
+        "class_id": prediction.get("class_id"),
+        "risk_level": previous_level,
+        "risk_score": previous_score,
+        "risk_probability": round(probabilities["medium"] + probabilities["high"], 4),
+        "risk_probabilities": probabilities,
+        "confidence": confidence,
+        "model_confidence": confidence,
+        "model_type": prediction.get("model_type"),
+        "generated_at": previous_at,
+        "predicted_at": previous_at,
+        "demo": True,
+        "seed_source": SEED_SOURCE,
+        "demo_prediction_history": True,
+    }
+
+
+def assign_demo_prediction_trend_states_for_group(predictions: list[dict]) -> dict[str, str]:
+    sorted_predictions = sorted(
+        predictions,
+        key=lambda row: (str(row.get("class_id") or ""), str(row.get("student_id") or ""), str(row.get("prediction_id") or "")),
+    )
+    targets = demo_trend_target_counts(len(sorted_predictions))
+    counts: Counter[str] = Counter()
+    assignments: dict[str, str] = {}
+
+    unassigned = [row for row in sorted_predictions if row.get("prediction_id")]
+    if len(unassigned) >= 4:
+        support_count = sum(1 for row in unassigned if normalize_demo_risk_level(row.get("risk_level")) in {"medium", "high"})
+        for state in ("improved", "worsened", "stable", "initial"):
+            candidate = preferred_demo_trend_candidate(unassigned, state, prefer_support=(state in {"improved", "worsened"} or support_count >= 6))
+            if not candidate or not candidate.get("prediction_id"):
+                continue
+            assignments[candidate["prediction_id"]] = state
+            counts[state] += 1
+            unassigned = [row for row in unassigned if row.get("prediction_id") != candidate["prediction_id"]]
+
+    for prediction in unassigned:
+        state = choose_demo_trend_state(prediction.get("risk_level"), counts, targets)
+        counts[state] += 1
+        assignments[prediction["prediction_id"]] = state
+    return assignments
+
+
+def assign_demo_prediction_trend_states(predictions: list[dict]) -> dict[str, str]:
+    by_class: dict[str, list[dict]] = {}
+    sorted_predictions = sorted(
+        predictions,
+        key=lambda row: (str(row.get("class_id") or ""), str(row.get("student_id") or ""), str(row.get("prediction_id") or "")),
+    )
+    for prediction in sorted_predictions:
+        by_class.setdefault(str(prediction.get("class_id") or ""), []).append(prediction)
+
+    targets = demo_trend_target_counts(len(sorted_predictions))
+    counts: Counter[str] = Counter()
+    assignments: dict[str, str] = {}
+    remaining_predictions: list[dict] = []
+    for class_predictions in by_class.values():
+        unassigned = [row for row in class_predictions if row.get("prediction_id")]
+        if len(unassigned) >= 4:
+            support_count = sum(1 for row in unassigned if normalize_demo_risk_level(row.get("risk_level")) in {"medium", "high"})
+            for state in ("improved", "worsened", "stable", "initial"):
+                candidate = preferred_demo_trend_candidate(unassigned, state, prefer_support=(state in {"improved", "worsened"} or support_count >= 6))
+                if not candidate or not candidate.get("prediction_id"):
+                    continue
+                assignments[candidate["prediction_id"]] = state
+                counts[state] += 1
+                unassigned = [row for row in unassigned if row.get("prediction_id") != candidate["prediction_id"]]
+        remaining_predictions.extend(unassigned)
+
+    for prediction in sorted(
+        remaining_predictions,
+        key=lambda row: (str(row.get("class_id") or ""), str(row.get("student_id") or ""), str(row.get("prediction_id") or "")),
+    ):
+        if not prediction.get("prediction_id"):
+            continue
+        state = choose_demo_trend_state(prediction.get("risk_level"), counts, targets)
+        counts[state] += 1
+        assignments[prediction["prediction_id"]] = state
+    return assignments
+
+
+async def prepare_demo_prediction_trends(db: Any) -> dict[str, int]:
+    predictions = await db[MongoCollections.prediction_results].find(
+        {"seed_source": SEED_SOURCE},
+    ).to_list(length=None)
+    assignments = assign_demo_prediction_trend_states(predictions)
+    counts: Counter[str] = Counter()
+    for row_index, prediction in enumerate(predictions):
+        prediction_id = prediction.get("prediction_id")
+        if not prediction_id:
+            continue
+        trend_state = assignments.get(prediction_id, "stable")
+        counts[trend_state] += 1
+        previous_prediction = demo_previous_prediction_payload(prediction, trend_state, row_index)
+        update = {
+            "$set": {
+                "previous_prediction": previous_prediction,
+                "demo_prediction_trend_state": trend_state,
+                "demo_prediction_trend_seeded": True,
+                "demo_prediction_trend_seeded_at": utc_now(),
+            }
+        }
+        await db[MongoCollections.prediction_results].update_one(
+            {"prediction_id": prediction_id, "seed_source": SEED_SOURCE},
+            update,
+        )
+    return {state: counts.get(state, 0) for state in ("stable", "improved", "worsened", "initial")}
+
+
 def user_summary(user: dict | None) -> dict[str, str | None]:
     if not user:
         return {"user_id": None, "name": None, "email": None}
@@ -118,8 +473,21 @@ def demo_course_code(class_index: int) -> str:
     return f"DEMO-{class_index + 1:03d}"
 
 
+def profile_for_class(class_doc_or_name: dict | str, class_index: int) -> ClassProfile:
+    if isinstance(class_doc_or_name, dict):
+        class_name = str(class_doc_or_name.get("name") or class_doc_or_name.get("class_name") or "")
+    else:
+        class_name = str(class_doc_or_name or "")
+    normalized = class_name.lower()
+    profiles_by_archetype = {profile.archetype: profile for profile in CLASS_PROFILES}
+    for keywords, archetype in COURSE_PROFILE_HINTS:
+        if any(keyword in normalized for keyword in keywords):
+            return profiles_by_archetype[archetype]
+    return CLASS_PROFILES[class_index % len(CLASS_PROFILES)]
+
+
 def demo_description(profile: ClassProfile) -> str:
-    return f"Development demo dataset profile: {profile.name}."
+    return f"Development demo dataset profile: {profile.name}; Bloom focus: {', '.join(profile.bloom_focus)}."
 
 
 def demo_metadata(
@@ -137,6 +505,8 @@ def demo_metadata(
         "department": DEMO_DEPARTMENT,
         "course_code": demo_course_code(class_index),
         "description": demo_description(profile),
+        "class_archetype": profile.archetype,
+        "bloom_focus": list(profile.bloom_focus),
         "instructor": user_summary(instructor),
         "students": [user_summary(student) for student in (students or [])],
     }
@@ -303,7 +673,7 @@ async def ensure_demo_base_data(db: AsyncIOMotorDatabase) -> None:
 
     for index, class_name in enumerate(DEMO_CLASS_NAMES):
         instructor = instructor_docs[index % len(instructor_docs)]
-        profile = CLASS_PROFILES[index % len(CLASS_PROFILES)]
+        profile = profile_for_class(class_name, index)
         metadata = demo_metadata(class_index=index, profile=profile, instructor=instructor, students=[])
         class_id = f"demo_class_{index + 1:02d}"
         await db[MongoCollections.classes].update_one(
@@ -353,12 +723,21 @@ async def clear_previous_demo_seed(db: AsyncIOMotorDatabase, class_id: str) -> d
     return counts
 
 
-def question_docs(class_id: str, metadata: dict[str, Any]) -> tuple[list[dict], list[dict]]:
+def bloom_sequence(profile: ClassProfile) -> list[str]:
+    focus = [level for level in profile.bloom_focus if level in BLOOM_LEVELS]
+    support = [level for level in BLOOM_LEVELS if level not in focus]
+    sequence = [*focus, *focus[:2], *support]
+    while len(sequence) < SESSION_COUNT:
+        sequence.extend(focus or BLOOM_LEVELS)
+    return sequence[: max(SESSION_COUNT, len(focus))]
+
+
+def question_docs(class_id: str, metadata: dict[str, Any], profile: ClassProfile) -> tuple[list[dict], list[dict]]:
     now = utc_now()
     slug = stable_slug(class_id)
     generated = []
     approved = []
-    for index, bloom_level in enumerate(BLOOM_LEVELS):
+    for index, bloom_level in enumerate(bloom_sequence(profile)):
         question_type = "short_answer" if index % 2 else "mcq"
         question_id = f"demo_q_{slug}_{index + 1}"
         base = {
@@ -371,7 +750,7 @@ def question_docs(class_id: str, metadata: dict[str, Any]) -> tuple[list[dict], 
             "options": ["A", "B", "C", "D"] if question_type == "mcq" else [],
             "correct_answer": "A" if question_type == "mcq" else f"{bloom_level.lower()} explanation",
             "correct_answer_placeholder": "A" if question_type == "mcq" else f"{bloom_level.lower()} explanation",
-            "explanation": f"Seeded demo question targeting the {bloom_level} Bloom level.",
+            "explanation": f"Seeded demo question targeting the {bloom_level} Bloom level for a {profile.name.lower()}.",
             "bloom_level": bloom_level,
             "difficulty": ["easy", "medium", "hard"][index % 3],
             "source_slide": index + 1,
@@ -390,7 +769,7 @@ def session_docs(class_id: str, instructor_id: str | None, question_ids: list[st
     slug = stable_slug(class_id)
     docs = []
     for index in range(SESSION_COUNT):
-        created_at = now - timedelta(days=(SESSION_COUNT - index) * 4)
+        created_at = now - timedelta(days=(SESSION_COUNT - index - 1) * 2)
         selected_question_ids = [
             question_ids[(index + offset) % len(question_ids)]
             for offset in range(QUESTIONS_PER_SESSION)
@@ -420,18 +799,86 @@ def session_docs(class_id: str, instructor_id: str | None, question_ids: list[st
     return docs
 
 
-def student_multiplier(student_index: int, spread: float = 0.12) -> float:
-    offsets = [-spread, -spread / 2, 0, spread / 2, spread, 0.04, -0.08]
-    return offsets[student_index % len(offsets)]
+def student_persona(profile: ClassProfile, student_index: int) -> StudentPersona:
+    persona_name = profile.persona_mix[student_index % len(profile.persona_mix)]
+    return STUDENT_PERSONAS[persona_name]
 
 
-def response_quality(profile: ClassProfile, bloom_level: str, student_index: int) -> float:
-    base = profile.correctness + student_multiplier(student_index, 0.16)
-    if bloom_level in profile.weak_levels:
-        base -= 0.22
-    if profile.name == "Mixed class" and student_index % 3 == 0:
-        base -= 0.18
-    return clamp(base, 0.05, 0.98)
+def session_progress(session_index: int, total_sessions: int) -> float:
+    if total_sessions <= 1:
+        return 0.5
+    return session_index / (total_sessions - 1)
+
+
+def evolving_metric(
+    base: float,
+    delta: float,
+    trend: float,
+    progress: float,
+    rng: random.Random,
+    volatility: float,
+    low: float = 0.02,
+    high: float = 0.99,
+) -> float:
+    trend_effect = trend * (progress - 0.5)
+    return clamp(base + delta + trend_effect + rng.gauss(0, volatility), low, high)
+
+
+def bloom_penalty(profile: ClassProfile, bloom_level: str) -> float:
+    if bloom_level not in profile.weak_levels:
+        return 0.0
+    if profile.archetype in {"excellent", "healthy"}:
+        return 0.06
+    if profile.archetype == "average":
+        return 0.1
+    if profile.archetype == "mixed":
+        return 0.14
+    return 0.18
+
+
+def response_quality(
+    profile: ClassProfile,
+    persona: StudentPersona,
+    bloom_level: str,
+    progress: float,
+    rng: random.Random,
+) -> float:
+    quality = evolving_metric(
+        profile.correctness,
+        persona.correctness_delta,
+        profile.trend + persona.trend,
+        progress,
+        rng,
+        persona.volatility,
+        0.04,
+        0.99,
+    )
+    return clamp(quality - bloom_penalty(profile, bloom_level), 0.04, 0.99)
+
+
+def semantic_quality(
+    profile: ClassProfile,
+    persona: StudentPersona,
+    bloom_level: str,
+    progress: float,
+    rng: random.Random,
+) -> float:
+    semantic = evolving_metric(
+        profile.semantic_quality,
+        persona.semantic_delta,
+        profile.trend + persona.trend,
+        progress,
+        rng,
+        persona.volatility,
+        0.04,
+        0.99,
+    )
+    return clamp(semantic - (bloom_penalty(profile, bloom_level) * 0.9), 0.04, 0.99)
+
+
+def response_time_seconds(profile: ClassProfile, persona: StudentPersona, quality: float, rng: random.Random) -> float:
+    seconds = profile.response_time + persona.response_time_delta + ((1 - quality) * 18) + rng.gauss(0, 6)
+    return round(max(12.0, min(140.0, seconds)), 2)
 
 
 def semantic_payload(score: float, submitted_at) -> dict[str, Any]:
@@ -476,11 +923,18 @@ def participation_and_responses(
     participation = []
     responses = []
     for session_index, session in enumerate(sessions):
-        session_age_rank = session_index / max(len(sessions) - 1, 1)
-        recent_factor = 0.75 + (profile.recent_boost * 0.25 * session_age_rank)
+        progress = session_progress(session_index, len(sessions))
         for student_index, student in enumerate(students):
-            attendance_probability = clamp(profile.attendance + student_multiplier(student_index) - (0.08 if session_index < 2 else 0))
-            attended = rng.random() < attendance_probability * recent_factor
+            persona = student_persona(profile, student_index)
+            attendance_probability = evolving_metric(
+                profile.attendance,
+                persona.attendance_delta,
+                profile.trend + persona.trend + ((profile.recent_boost - 1.0) * 0.12),
+                progress,
+                rng,
+                persona.volatility,
+            )
+            attended = rng.random() < attendance_probability
             if not attended:
                 continue
 
@@ -495,26 +949,34 @@ def participation_and_responses(
                     "joined_at": joined_at,
                     "last_seen_at": last_seen_at,
                     "student": user_summary(student),
+                    "demo_student_persona": persona.name,
                     **metadata,
                 }
             )
 
-            answer_probability = clamp(profile.participation + student_multiplier(student_index, 0.14))
+            answer_probability = evolving_metric(
+                profile.participation,
+                persona.participation_delta,
+                profile.trend + persona.trend,
+                progress,
+                rng,
+                persona.volatility,
+            )
             for question_offset, question_id in enumerate(session["question_ids"]):
                 if rng.random() > answer_probability:
                     continue
 
                 question = questions_by_id[question_id]
                 bloom_level = question.get("bloom_level") or "Apply"
-                quality = response_quality(profile, bloom_level, student_index)
+                quality = response_quality(profile, persona, bloom_level, progress, rng)
                 is_correct = rng.random() < quality
-                submitted_at = joined_at + timedelta(minutes=question_offset * 4 + rng.randint(1, 4))
-                response_time = max(8, 22 + rng.randint(-6, 18) + int((1 - quality) * 18))
-                score = clamp(profile.semantic_quality + student_multiplier(student_index, 0.12) - (0.2 if bloom_level in profile.weak_levels else 0.0))
+                response_time = response_time_seconds(profile, persona, quality, rng)
+                submitted_at = joined_at + timedelta(minutes=question_offset * 4 + 1, seconds=response_time)
+                score = semantic_quality(profile, persona, bloom_level, progress, rng)
                 if is_correct:
-                    score = max(score, 0.72 + rng.random() * 0.22)
+                    score = max(score, clamp(0.68 + (quality * 0.24) + rng.gauss(0, 0.03), 0.68, 0.98))
                 else:
-                    score = min(score, 0.58)
+                    score = min(score, clamp(0.28 + (quality * 0.45) + rng.gauss(0, 0.06), 0.08, 0.68))
 
                 response = {
                     "response_id": new_id("response"),
@@ -530,6 +992,7 @@ def participation_and_responses(
                     "response_time_seconds": response_time,
                     "submitted_at": submitted_at,
                     "student": user_summary(student),
+                    "demo_student_persona": persona.name,
                     **metadata,
                 }
                 response.update(semantic_payload(score, submitted_at))
@@ -545,7 +1008,7 @@ async def seed_class(
     instructors: list[dict],
 ) -> dict[str, Any]:
     class_id = class_doc["class_id"]
-    profile = CLASS_PROFILES[class_index % len(CLASS_PROFILES)]
+    profile = profile_for_class(class_doc, class_index)
     rng = random.Random(f"{SEED_SOURCE}:{class_id}:{profile.name}")
 
     removed = await clear_previous_demo_seed(db, class_id)
@@ -573,7 +1036,7 @@ async def seed_class(
             },
         )
 
-    generated_questions, approved_questions = question_docs(class_id, metadata)
+    generated_questions, approved_questions = question_docs(class_id, metadata, profile)
     question_ids = [row["question_id"] for row in approved_questions]
     sessions = session_docs(class_id, instructor_id, question_ids, class_index, metadata)
     questions_by_id = {row["question_id"]: row for row in approved_questions}
@@ -661,6 +1124,9 @@ async def seed_demo_learning_activity() -> list[dict[str, Any]]:
             if not class_doc.get("class_id"):
                 continue
             summaries.append(await seed_class(db, class_doc, index, students, instructors))
+        trend_distribution = await prepare_demo_prediction_trends(db)
+        for summary in summaries:
+            summary["prediction_trend_demo_distribution"] = trend_distribution
         return summaries
     finally:
         client.close()
@@ -668,6 +1134,7 @@ async def seed_demo_learning_activity() -> list[dict[str, Any]]:
 
 def print_summary(summaries: list[dict[str, Any]]) -> None:
     print(f"Seeded demo learning activity for {len(summaries)} classes.")
+    trend_distribution = next((row.get("prediction_trend_demo_distribution") for row in summaries if row.get("prediction_trend_demo_distribution")), None)
     for row in summaries:
         class_name = row.get("class_name") or row.get("class_id")
         if row.get("skipped"):
@@ -677,6 +1144,11 @@ def print_summary(summaries: list[dict[str, Any]]) -> None:
             "- {class_name}: {profile}, {students} students, {sessions} sessions, "
             "{responses} responses, {analytics_docs} analytics docs, "
             "{prediction_results} predictions, {weak_cognitive_skill_rows} Bloom rows".format(**row)
+        )
+    if trend_distribution:
+        print(
+            "- Demo prediction trends: "
+            + ", ".join(f"{state}={count}" for state, count in trend_distribution.items())
         )
 
 

@@ -8,7 +8,23 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.database import MongoCollections
 from app.ml.feature_schema import GAMIFICATION_CONTEXT_COLUMNS, PREDICTION_FEATURE_COLUMNS
 from app.models import utc_now
+from app.prediction_service import (
+    has_prediction_confidence as shared_has_prediction_confidence,
+    predicted_class_confidence,
+    prediction_probabilities_value as shared_prediction_probabilities_value,
+    prediction_report_payload,
+)
 from app.services import serialize_document
+
+BLOOM_LEVEL_LABELS = {
+    "remember": "Remember",
+    "understand": "Understand",
+    "apply": "Apply",
+    "analyze": "Analyze",
+    "evaluate": "Evaluate",
+    "create": "Create",
+}
+MASTERY_THRESHOLD = 60.0
 
 
 def clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
@@ -20,79 +36,55 @@ def avg(values: list[float]) -> float:
     return round(sum(clean) / len(clean), 2) if clean else 0.0
 
 
-def prediction_confidence_value(row: dict) -> float:
-    raw = row.get("confidence", row.get("model_confidence"))
-    if raw is None:
+def percentage(numerator: float, denominator: float) -> float:
+    if not denominator:
         return 0.0
+    return round((float(numerator) / float(denominator)) * 100, 2)
+
+
+def bloom_mastery_status(mastery_rate: float) -> str:
+    if mastery_rate >= 80:
+        return "Strong"
+    if mastery_rate >= 60:
+        return "Acceptable"
+    if mastery_rate >= 40:
+        return "Needs Attention"
+    return "Needs Improvement"
+
+
+def bloom_mastery_rate(row: dict) -> float | None:
+    if isinstance(row.get("mastery_rate"), (int, float)):
+        return round(float(row["mastery_rate"]), 2)
+    if isinstance(row.get("average_correctness"), (int, float)):
+        value = float(row["average_correctness"])
+        return round(value * 100 if value <= 1 else value, 2)
+    return None
+
+
+def bloom_level_label(value: str | None) -> str | None:
+    return BLOOM_LEVEL_LABELS.get(str(value or "").strip().lower())
+
+
+def normalize_probability(value: Any) -> float:
     try:
-        value = float(raw)
+        numeric = float(value or 0)
     except (TypeError, ValueError):
         return 0.0
-    if value > 1:
-        value /= 100
-    value = max(0.0, min(value, 1.0))
-    if value < 0.995:
-        return round(value, 4)
-
-    score = student_feature_risk_score(row)
-    level = str(row.get("risk_level") or "").lower()
-    if level == "high":
-        return round(min(0.58 + ((score / 100) * 0.34), 0.92), 4)
-    if level == "medium":
-        distance_from_edge = min(abs(score - 45), abs(75 - score), 15)
-        return round(min(0.6 + (distance_from_edge / 15 * 0.2), 0.8), 4)
-    return round(min(0.58 + (((100 - score) / 100) * 0.34), 0.92), 4)
-
-
-def student_feature_risk_score(row: dict) -> float:
-    features = row.get("features") or {}
-    attendance_rate = float(features.get("attendance_rate") or row.get("attendance_rate") or 0)
-    correctness_rate = float(features.get("correctness_rate") or row.get("correctness_rate") or 0)
-    answer_rate = float(features.get("answer_rate") or features.get("participation_rate") or row.get("participation_rate") or 0)
-    consistency_score = float(features.get("consistency_score") or row.get("consistency_score") or 0)
-    recent_activity_count = int(features.get("recent_activity_count") or row.get("recent_activity_count") or 0)
-    weak_concepts_count = int(features.get("weak_concepts_count") or row.get("weak_concepts_count") or 0)
-    score = (
-        (max(0, 60 - attendance_rate) * 0.35)
-        + (max(0, 60 - correctness_rate) * 0.35)
-        + (max(0, 60 - answer_rate) * 0.2)
-        + (12 if recent_activity_count == 0 else 0)
-        + (max(0, 60 - consistency_score) * 0.12)
-        + min(weak_concepts_count * 8, 24)
-    )
-    if score > 0:
-        return clamp(score)
-    return clamp(float(row.get("risk_score") or 0))
+    if numeric > 1:
+        numeric /= 100
+    return max(0.0, min(numeric, 1.0))
 
 
 def prediction_probabilities_value(row: dict) -> dict | None:
-    raw = row.get("risk_probabilities")
-    if not isinstance(raw, dict) or not raw:
-        return raw
-    values = {}
-    for key, value in raw.items():
-        try:
-            values[str(key).lower()] = max(0.0, float(value or 0))
-        except (TypeError, ValueError):
-            values[str(key).lower()] = 0.0
-    total = sum(values.values())
-    if total <= 0:
-        return values
-    normalized = {key: value / total for key, value in values.items()}
-    max_key = max(normalized, key=normalized.get)
-    if normalized[max_key] < 0.995 or len(normalized) <= 1:
-        return {key: round(value, 4) for key, value in normalized.items()}
-    confidence_cap = prediction_confidence_value(row)
-    excess = normalized[max_key] - confidence_cap
-    if excess <= 0:
-        return {key: round(value, 4) for key, value in normalized.items()}
-    normalized[max_key] = confidence_cap
-    other_keys = [key for key in normalized if key != max_key]
-    other_total = sum(normalized[key] for key in other_keys)
-    for key in other_keys:
-        share = normalized[key] / other_total if other_total else 1 / len(other_keys)
-        normalized[key] += excess * share
-    return {key: round(value, 4) for key, value in normalized.items()}
+    return shared_prediction_probabilities_value(row)
+
+
+def prediction_confidence_value(row: dict) -> float:
+    return predicted_class_confidence(row)
+
+
+def has_prediction_confidence(row: dict) -> bool:
+    return shared_has_prediction_confidence(row)
 
 
 def as_datetime(value: Any) -> datetime | None:
@@ -418,6 +410,7 @@ def build_trends(context: dict) -> list[dict]:
                 "engagement": avg([row.get("engagement_score", 0) for row in rows]),
                 "attendance": avg([row.get("attendance_rate", 0) for row in rows]),
                 "participation": avg([row.get("participation_rate", 0) for row in rows]),
+                "correctness": avg([row.get("correctness_rate", 0) for row in rows]),
                 "at_risk_count": len({row.get("student_id") for row in rows if row.get("risk_level") in {"Critical", "High", "Medium"}}),
                 "active_sessions": active_sessions_by_week.get(week, 0),
             }
@@ -456,10 +449,12 @@ def build_prediction_overview(context: dict) -> dict:
     weak_by_class: dict[str, list[dict]] = defaultdict(list)
     weak_by_concept: dict[str, list[dict]] = defaultdict(list)
     for row in weak_concepts:
+        bloom_label = bloom_level_label(row.get("concept"))
+        if not bloom_label:
+            continue
         if row.get("class_id"):
             weak_by_class[row["class_id"]].append(row)
-        if row.get("concept"):
-            weak_by_concept[str(row["concept"])].append(row)
+        weak_by_concept[bloom_label].append(row)
 
     def instructor_display(class_id: str) -> str:
         ids = sorted(set(class_meta.get(class_id, {}).get("instructor_ids", []) or []) | instructor_ids_by_class.get(class_id, set()))
@@ -479,7 +474,7 @@ def build_prediction_overview(context: dict) -> dict:
         confidence_values = [
             prediction_confidence_value(row)
             for row in class_predictions
-            if row.get("confidence", row.get("model_confidence")) is not None
+            if has_prediction_confidence(row)
         ]
         prediction_confidence = round(avg(confidence_values) * 100, 2) if confidence_values else 0.0
         student_count = len(student_ids_by_class.get(class_id, set())) or total_predictions or health.get("active_students", 0)
@@ -519,15 +514,32 @@ def build_prediction_overview(context: dict) -> dict:
     reports = [class_prediction_report(class_doc["class_id"]) for class_doc in classes if class_doc.get("class_id")]
     distribution = Counter(row.get("risk_level", "low") for row in predictions)
     last_run = max([as_datetime(row.get("generated_at") or row.get("predicted_at")) for row in predictions if as_datetime(row.get("generated_at") or row.get("predicted_at"))], default=None)
-    weak_class_ids = {row.get("class_id") for row in weak_concepts if row.get("class_id")}
+    weak_class_ids = {
+        class_id
+        for class_id, rows in weak_by_class.items()
+        if any((bloom_mastery_rate(row) or 0) < MASTERY_THRESHOLD for row in rows)
+    }
     engagement_decline_classes = {row.get("class_id") for row in predictions if row.get("engagement_trend") == "declining" and row.get("class_id")}
     weak_concept_rows = []
     for concept, rows in weak_by_concept.items():
-        affected_classes = {row.get("class_id") for row in rows if row.get("class_id")}
+        total_questions_answered = sum(int(row.get("total_questions_answered") or 0) for row in rows)
+        correct_answers = sum(int(row.get("correct_answers") or 0) for row in rows)
+        mastery_rate = percentage(correct_answers, total_questions_answered) if total_questions_answered else avg([value for row in rows if (value := bloom_mastery_rate(row)) is not None])
+        if total_questions_answered <= 0 and mastery_rate <= 0:
+            continue
+        status = bloom_mastery_status(mastery_rate)
+        if status not in {"Needs Attention", "Needs Improvement"}:
+            continue
+        affected_classes = {
+            row.get("class_id")
+            for row in rows
+            if row.get("class_id") and (bloom_mastery_rate(row) is None or bloom_mastery_rate(row) < MASTERY_THRESHOLD)
+        }
         affected_class_rows = [
             {
                 "class_id": class_id,
                 "class_name": class_names.get(class_id, class_id),
+                "mastery_rate": bloom_mastery_rate(next((row for row in rows if row.get("class_id") == class_id), {})),
             }
             for class_id in sorted(affected_classes)
         ]
@@ -537,15 +549,21 @@ def build_prediction_overview(context: dict) -> dict:
             for student_id in (row.get("affected_students") or [])
             if student_id
         }
-        average_correctness = avg([row.get("average_correctness", 0) for row in rows])
-        severity = "High" if average_correctness < 0.45 or len(affected_classes) >= 3 else "Medium" if average_correctness < 0.65 or len(affected_classes) >= 2 else "Low"
+        affected_students_count = len(affected_students) or sum(int(row.get("affected_students_count") or row.get("weak_students_count") or 0) for row in rows)
         weak_concept_rows.append(
             {
                 "concept": concept,
+                "bloom_level": concept,
+                "total_questions_answered": total_questions_answered,
+                "correct_answers": correct_answers,
+                "mastery_rate": mastery_rate,
+                "mastery_status": status,
+                "mastery_threshold": MASTERY_THRESHOLD,
                 "affected_classes": len(affected_classes),
                 "affected_class_rows": affected_class_rows,
-                "affected_students": len(affected_students) or sum(int(row.get("weak_students_count") or 0) for row in rows),
-                "severity": severity,
+                "affected_students": affected_students_count,
+                "severity": "High" if status == "Needs Improvement" else "Medium",
+                "source": "descriptive_bloom_mastery",
             }
         )
 
@@ -589,13 +607,13 @@ def build_prediction_overview(context: dict) -> dict:
                     "class_id": report["class_id"],
                 }
             )
-    for concept in sorted(weak_concept_rows, key=lambda row: (-row["affected_classes"], -row["affected_students"]))[:4]:
+    for concept in sorted(weak_concept_rows, key=lambda row: (row["mastery_rate"], -row["affected_students"]))[:4]:
         if concept["affected_classes"] > 1:
             recommendations.append(
                 {
                     "priority": "Medium" if concept["severity"] != "High" else "High",
-                    "title": f"Reinforce {concept['concept']} across multiple classes",
-                    "reason": f"{concept['affected_students']} students affected in {concept['affected_classes']} classes.",
+                    "title": f"Reinforce {concept['concept']} mastery across multiple classes",
+                    "reason": f"{concept['affected_students']} students below mastery in {concept['affected_classes']} classes.",
                     "class_id": None,
                 }
             )
@@ -610,9 +628,9 @@ def build_prediction_overview(context: dict) -> dict:
         "average_semantic_score": "Semantic Score",
         "consistency_score": "Consistency",
         "recent_activity_count": "Recent Activity",
-        # Backward-compatible field name. The frontend presents this as Bloom
-        # cognitive skills because current values are Bloom taxonomy levels.
-        "weak_concepts_count": "Weak Concepts",
+        # Backward-compatible feature name. This is descriptive Bloom mastery
+        # from answer correctness, not a model-predicted Bloom level.
+        "weak_concepts_count": "Bloom Mastery Gaps",
         "response_time": "Response Time",
         "engagement_score": "Engagement",
     }
@@ -632,7 +650,7 @@ def build_prediction_overview(context: dict) -> dict:
         return 0.0
 
     def factor_direction(label: str, features: dict) -> str:
-        if label == "Weak Concepts":
+        if label == "Bloom Mastery Gaps":
             return "negative" if feature_value(features, "weak_concepts_count") > 0 else "positive"
         if label == "Response Time":
             return "negative" if feature_value(features, "response_time", "average_response_time") > 45 else "positive"
@@ -657,7 +675,7 @@ def build_prediction_overview(context: dict) -> dict:
             ("Semantic Score", feature_value(features, "semantic_score", "average_semantic_score"), max(0, 60 - feature_value(features, "semantic_score", "average_semantic_score"))),
             ("Consistency", feature_value(features, "consistency_score"), max(0, 60 - feature_value(features, "consistency_score"))),
             ("Recent Activity", feature_value(features, "recent_activity_count"), 12 if feature_value(features, "recent_activity_count") == 0 else max(0, 5 - feature_value(features, "recent_activity_count")) * 2),
-            ("Weak Concepts", feature_value(features, "weak_concepts_count"), min(feature_value(features, "weak_concepts_count") * 8, 24)),
+            ("Bloom Mastery Gaps", feature_value(features, "weak_concepts_count"), min(feature_value(features, "weak_concepts_count") * 8, 24)),
         ]
         for label, value, impact in candidates:
             if impact > 0:
@@ -723,39 +741,50 @@ def build_prediction_overview(context: dict) -> dict:
         context["note"] = "Engagement context, not used by the risk model."
         return context
 
+    def student_report_status(risk_level: str) -> str:
+        normalized = str(risk_level or "").lower()
+        if normalized == "high":
+            return "Critical"
+        if normalized == "medium":
+            return "Needs Attention"
+        return "Stable"
+
+    def prediction_payload(prediction: dict) -> dict:
+        return prediction_report_payload(
+            prediction,
+            class_names=class_names,
+            class_meta=class_meta,
+            instructor_display=instructor_display,
+        )
+
+    latest_student_predictions: dict[tuple[str, str], dict] = {}
+    for row in predictions:
+        student_id = row.get("student_id")
+        class_id = row.get("class_id")
+        if not student_id or not class_id:
+            continue
+        key = (student_id, class_id)
+        current_date = as_datetime(row.get("generated_at") or row.get("predicted_at")) or datetime.min.replace(tzinfo=timezone.utc)
+        existing = latest_student_predictions.get(key)
+        existing_date = as_datetime(existing.get("generated_at") or existing.get("predicted_at")) if existing else None
+        if not existing or current_date >= (existing_date or datetime.min.replace(tzinfo=timezone.utc)):
+            latest_student_predictions[key] = row
+
+    student_reports = [
+        prediction_payload(row)
+        for row in sorted(
+            latest_student_predictions.values(),
+            key=lambda item: (
+                str(item.get("student_name") or ""),
+                str(item.get("class_id") or ""),
+                str(item.get("generated_at") or item.get("predicted_at") or ""),
+            ),
+        )
+    ]
+
     explainable_predictions = []
     for row in sorted(predictions, key=lambda item: (str(item.get("risk_level")) != "high", -float(item.get("risk_score") or 0)))[:24]:
-        explanation = explain_prediction(row)
-        explainable_predictions.append(
-            {
-                "prediction_id": row.get("prediction_id"),
-                "student_id": row.get("student_id"),
-                "student_name": row.get("student_name", "Student"),
-                "class_id": row.get("class_id"),
-                "class_name": class_names.get(row.get("class_id"), row.get("class_id")),
-                "risk_level": row.get("risk_level", "low"),
-                "confidence": prediction_confidence_value(row),
-                "risk_probability": row.get("risk_probability", 0),
-                "risk_probabilities": prediction_probabilities_value(row),
-                "engagement_status": row.get("engagement_status"),
-                "academic_status": row.get("academic_status"),
-                "engagement_index": row.get("engagement_index", row.get("derived_engagement_index", row.get("predicted_score", 0))),
-                "risk_reasons": row.get("risk_reasons") or row.get("reasons") or [],
-                "weak_concepts": (row.get("features") or {}).get("weak_concepts") or [],
-                "feature_importance": [
-                    item
-                    for item in (row.get("feature_importance") or [])
-                    if item.get("feature") in PREDICTION_FEATURE_COLUMNS
-                ],
-                "features": row.get("features") or {},
-                "model_feature_values": row.get("model_feature_values") or {
-                    name: feature_value(row.get("features") or {}, name)
-                    for name in PREDICTION_FEATURE_COLUMNS
-                },
-                "engagement_context": engagement_context(row.get("features") or {}, row),
-                "explanation": explanation,
-            }
-        )
+        explainable_predictions.append(prediction_payload(row))
 
     if not predictions:
         return {
@@ -771,7 +800,8 @@ def build_prediction_overview(context: dict) -> dict:
             "class_reports": reports,
             "high_risk_classes": [],
             "weak_class_ranking": sorted(reports, key=lambda row: (row["engagement_score"], row["correctness"], -row["risk_concentration"]))[:8],
-            "weak_concepts": weak_concept_rows,
+            "weak_concepts": sorted(weak_concept_rows, key=lambda row: (row["mastery_rate"], -row["affected_students"]))[:12],
+            "student_reports": [],
             "explainable_predictions": [],
             "comparison": {
                 "classes": comparison_rows("class_name"),
@@ -795,9 +825,9 @@ def build_prediction_overview(context: dict) -> dict:
     for row in weak_concepts:
         prediction_alerts.append(
             {
-                "title": f"Weak concept detected: {row.get('concept', 'Concept')}",
+                "title": f"Bloom mastery gap detected: {row.get('concept', 'Level')}",
                 "class_name": class_names.get(row.get("class_id"), row.get("class_id")),
-                "confidence": round(float(row.get("average_correctness") or 0) * 100, 2),
+                "confidence": round(float(row.get("mastery_rate") if row.get("mastery_rate") is not None else float(row.get("average_correctness") or 0) * 100), 2),
                 "generated_at": iso_date(as_datetime(row.get("generated_at"))),
             }
         )
@@ -805,20 +835,21 @@ def build_prediction_overview(context: dict) -> dict:
     return {
         "empty": False,
         "high_risk_students_count": len([row for row in predictions if row.get("risk_level") == "high"]),
-        "weak_classes": len({row.get("class_id") for row in weak_concepts if row.get("class_id")}),
+        "weak_classes": len({row.get("class_id") for row in weak_concepts if row.get("class_id") and (bloom_mastery_rate(row) or 0) < MASTERY_THRESHOLD}),
         "engagement_decline_classes": len({row.get("class_id") for row in predictions if row.get("engagement_trend") == "declining" and row.get("class_id")}),
         "risk_distribution": {
             "low": distribution.get("low", 0),
             "medium": distribution.get("medium", 0),
             "high": distribution.get("high", 0),
         },
-        "prediction_confidence": avg([prediction_confidence_value(row) * 100 for row in predictions]),
+        "prediction_confidence": avg([prediction_confidence_value(row) * 100 for row in predictions if has_prediction_confidence(row)]),
         "last_prediction_run": iso_date(last_run),
         "recent_prediction_alerts": prediction_alerts[:6],
         "class_reports": reports,
         "high_risk_classes": sorted(reports, key=lambda row: (-row["high_risk"], -row["risk_concentration"], row["engagement_score"]))[:8],
         "weak_class_ranking": sorted(reports, key=lambda row: (row["engagement_score"], row["correctness"], -row["risk_concentration"]))[:8],
-        "weak_concepts": sorted(weak_concept_rows, key=lambda row: (-row["affected_classes"], -row["affected_students"]))[:12],
+        "weak_concepts": sorted(weak_concept_rows, key=lambda row: (row["mastery_rate"], -row["affected_students"]))[:12],
+        "student_reports": student_reports,
         "explainable_predictions": explainable_predictions,
         "comparison": {
             "classes": comparison_rows("class_name"),
@@ -978,7 +1009,7 @@ def build_alerts(context: dict, class_rows: list[dict], instructor_rows: list[di
                     "class_id": class_id,
                     "class_name": class_name,
                     "affected": class_name,
-                    "reason": f"{class_name} shows repeated weakness in {concept}.",
+            "reason": f"{class_name} has Bloom mastery below threshold in {concept}.",
                     "recommended_action": f"Reinforce {concept} with a short example and follow-up question.",
                     "created_at": iso_date(utc_now()),
                 }

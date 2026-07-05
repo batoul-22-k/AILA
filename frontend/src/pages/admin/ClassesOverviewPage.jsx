@@ -9,9 +9,11 @@ import { Button } from "../../components/Button";
 import { ClassEnrollmentPanel } from "../../components/ClassEnrollmentPanel";
 import { DashboardCard } from "../../components/DashboardCard";
 import { EmptyState } from "../../components/EmptyState";
+import { IconButton } from "../../components/IconButton";
 import { Input } from "../../components/Input";
 import { Modal } from "../../components/Modal";
 import { PageHeader } from "../../components/PageHeader";
+import { StatusIcon } from "../../components/StatusIcon";
 import { useToast } from "../../components/ToastProvider";
 
 export function ClassesOverviewPage() {
@@ -165,10 +167,7 @@ export function ClassesOverviewPage() {
         tone="orange"
         action={
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" type="button" onClick={loadClasses}>
-              <RefreshCw size={17} />
-              Refresh
-            </Button>
+            <IconButton label="Refresh classes" icon={RefreshCw} onClick={loadClasses} />
             <Button variant="orange" type="button" onClick={() => setCreateModalOpen(true)}>
               <Plus size={17} />
               Create class
@@ -232,7 +231,7 @@ export function ClassesOverviewPage() {
                   <div className="flex flex-wrap gap-2">
                     {classDoc.course_code && <Badge tone="teal">{classDoc.course_code}</Badge>}
                     {classDoc.semester && <Badge tone="orange">{classDoc.semester}</Badge>}
-                    <Badge tone={String(classDoc.status || "").toLowerCase() === "inactive" ? "slate" : "green"}>{String(classDoc.status || "active").toLowerCase() === "inactive" ? "Inactive" : "Active"}</Badge>
+                    <StatusIcon status={String(classDoc.status || "active").toLowerCase() === "inactive" ? "Inactive" : "Active"} type="intervention" />
                   </div>
                 </div>
               </button>
@@ -241,41 +240,14 @@ export function ClassesOverviewPage() {
 
           {selectedClass && (
             <div className="mt-6 flex items-center justify-between gap-3 rounded-[var(--role-radius)] border border-role-border bg-role-hover p-3">
-              <Badge tone={String(selectedClass.status || "").toLowerCase() === "inactive" ? "slate" : "green"}>{String(selectedClass.status || "active").toLowerCase() === "inactive" ? "Inactive" : "Active"}</Badge>
+              <StatusIcon status={String(selectedClass.status || "active").toLowerCase() === "inactive" ? "Inactive" : "Active"} type="intervention" />
               <div className="flex items-center gap-2">
                 {String(selectedClass.status || "").toLowerCase() === "inactive" ? (
-                  <button
-                    type="button"
-                    aria-label="Activate class"
-                    title="Activate class"
-                    disabled={updatingStatus}
-                    onClick={() => handleClassStatus("active")}
-                    className="focus-ring grid h-10 w-10 place-items-center rounded-full border border-role-border bg-white text-role-primary transition hover:border-role-primary disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-900"
-                  >
-                    <Power size={17} />
-                  </button>
+                  <IconButton label="Activate class" icon={Power} disabled={updatingStatus} onClick={() => handleClassStatus("active")} tone="role" />
                 ) : (
-                  <button
-                    type="button"
-                    aria-label="Deactivate class"
-                    title="Deactivate class"
-                    disabled={updatingStatus}
-                    onClick={() => handleClassStatus("inactive")}
-                    className="focus-ring grid h-10 w-10 place-items-center rounded-full border border-role-border bg-white text-slate-600 transition hover:border-role-primary hover:text-role-primary disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-900 dark:text-slate-200"
-                  >
-                    <PowerOff size={17} />
-                  </button>
+                  <IconButton label="Deactivate class" icon={PowerOff} disabled={updatingStatus} onClick={() => handleClassStatus("inactive")} />
                 )}
-                <button
-                  type="button"
-                  aria-label="Delete class"
-                  title="Delete class"
-                  disabled={updatingStatus}
-                  onClick={handleDeleteClass}
-                  className="focus-ring grid h-10 w-10 place-items-center rounded-full border border-red-100 bg-red-50 text-red-600 transition hover:border-red-200 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-100"
-                >
-                  <Trash2 size={17} />
-                </button>
+                <IconButton label="Delete class" icon={Trash2} disabled={updatingStatus} onClick={handleDeleteClass} tone="danger" />
               </div>
             </div>
           )}
