@@ -30,6 +30,7 @@ import {
   regenerateInstructorQuestion,
   saveInstructorQuestions,
   startAiService,
+  testInstructorLlmConnection,
   uploadInstructorLecture,
 } from "../../api/client";
 import { Badge } from "../../components/Badge";
@@ -43,6 +44,10 @@ import { useCurrentWorkspace } from "../../state/WorkspaceContext";
 import { cn } from "../../utils/cn";
 
 const bloomOptions = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"];
+const llmProviderOptions = [
+  { value: "ollama-local", label: "Local Ollama", modelFallback: "TinyLlama or configured local model" },
+  { value: "ollama-cloud", label: "Cloud Ollama", modelFallback: "Configured cloud model" },
+];
 const defaultGenerationSettings = {
   mcq_count: 3,
   short_answer_count: 1,
@@ -65,6 +70,14 @@ function getStoredJson(key, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function createDebugUuid() {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function debugGenerationFor(question) {
+  return question?._debug_generation || {};
 }
 
 function studioKey(classId, key) {
@@ -103,6 +116,107 @@ function UploadActionButton({ label = "Choose file", loading = false, disabled =
         {loading ? "Uploading..." : label}
       </span>
     </label>
+  );
+}
+
+function connectionLabel(result) {
+  if (!result) return "Not tested";
+  if (result.reachable) return "Connected";
+  if (result.error_category === "authentication_failed") return "Authentication failed";
+  if (result.error_category === "model_not_found") return "Model not found";
+  if (result.error_category === "timeout") return "Timeout";
+  return "Unreachable";
+}
+
+function timestampLabel(date = new Date()) {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function LLMDeploymentControls({
+  provider,
+  onProviderChange,
+  connection,
+  testing,
+  onTest,
+  disabled = false,
+}) {
+  const providerOption = llmProviderOptions.find((option) => option.value === provider) || llmProviderOptions[0];
+  const status = connectionLabel(connection);
+  const connected = connection?.reachable;
+  const modelLabel = connection?.configured_model || providerOption.modelFallback;
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-role-border bg-white/80 p-3 shadow-soft dark:border-slate-800 dark:bg-slate-900/80 sm:flex-row sm:items-end sm:justify-between">
+      <div className="grid flex-1 gap-3 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)]">
+        <label className="grid gap-1">
+          <span className="text-[11px] font-black uppercase tracking-wide text-[var(--color-muted)]">Deployment</span>
+          <select
+            className="h-10 rounded-lg border border-role-border bg-white px-3 text-sm font-bold text-role-text outline-none transition focus:border-role-primary dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+            value={provider}
+            disabled={disabled}
+            onChange={(event) => onProviderChange(event.target.value)}
+          >
+            {llmProviderOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="grid gap-1">
+          <span className="text-[11px] font-black uppercase tracking-wide text-[var(--color-muted)]">Model</span>
+          <select
+            className="h-10 rounded-lg border border-role-border bg-white px-3 text-sm font-bold text-role-text outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+            value="configured"
+            disabled
+            onChange={() => {}}
+          >
+            <option value="configured">{modelLabel}</option>
+          </select>
+        </label>
+      </div>
+      <div className="flex items-center justify-between gap-3 sm:justify-end">
+        <span className={cn("text-xs font-black", connected ? "text-emerald-600" : "text-slate-500 dark:text-slate-400")}>{status}</span>
+        <Button type="button" variant="outline" onClick={onTest} loading={testing} disabled={disabled || testing}>
+          <Radio size={16} />
+          Test connection
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function GenerationLogsPanel({ logs, onClear }) {
+  if (!logs.length) return null;
+  return (
+    <DashboardCard className="bg-white">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-wide text-role-primary">Generation logs</p>
+          <h2 className="mt-1 text-lg font-black text-role-text dark:text-white">Latest Ollama events</h2>
+        </div>
+        <Button type="button" variant="outline" onClick={onClear}>
+          Clear
+        </Button>
+      </div>
+      <div className="mt-4 grid gap-2">
+        {logs.map((entry) => (
+          <div
+            key={entry.id}
+            className={cn(
+              "rounded-xl border px-3 py-2 text-sm",
+              entry.level === "error"
+                ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200"
+                : "border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300",
+            )}
+          >
+            <div className="flex flex-wrap items-center gap-2 text-xs font-black uppercase tracking-wide">
+              <span>{entry.time}</span>
+              <span>{entry.provider}</span>
+              <span>{entry.context}</span>
+            </div>
+            <p className="mt-1 font-semibold">{entry.message}</p>
+          </div>
+        ))}
+      </div>
+    </DashboardCard>
   );
 }
 
@@ -1064,6 +1178,10 @@ export function ContentStudioPage() {
   }));
   const [generationProgress, setGenerationProgress] = useState({ current: 0, total: 0 });
   const [generationLabel, setGenerationLabel] = useState("Ready to generate questions");
+  const [llmProvider, setLlmProvider] = useState(() => localStorage.getItem("contentStudio:llmProvider") || "ollama-local");
+  const [llmConnection, setLlmConnection] = useState(null);
+  const [testingLlmConnection, setTestingLlmConnection] = useState(false);
+  const [generationLogs, setGenerationLogs] = useState([]);
   const [error, setError] = useState("");
   const [presentation, setPresentation] = useState(null);
   const [createdSession, setCreatedSession] = useState(null);
@@ -1077,7 +1195,27 @@ export function ContentStudioPage() {
 
   function notifyError(err, fallback) {
     const description = err instanceof Error ? err.message : fallback;
+    setError(description);
+    appendGenerationLog({
+      level: "error",
+      context: fallback,
+      message: description,
+      provider: llmProvider,
+    });
+    console.error("[ContentStudio]", fallback, err);
     showToast({ title: "Something went wrong", description, tone: "error" });
+  }
+
+  function appendGenerationLog({ level = "info", context = "Generation", message, provider = llmProvider }) {
+    const entry = {
+      id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      time: timestampLabel(),
+      level,
+      context,
+      provider,
+      message: String(message || ""),
+    };
+    setGenerationLogs((current) => [entry, ...current].slice(0, 8));
   }
 
   function notifyAiServiceStatus(status, { success = false } = {}) {
@@ -1137,9 +1275,9 @@ export function ContentStudioPage() {
     loadClasses();
   }, [instructorWorkspace?.class_id, selectedClassId]);
 
-  async function refreshAiStatus({ notify = false } = {}) {
+  async function refreshAiStatus({ notify = false, provider = llmProvider } = {}) {
     try {
-      const status = await getAiStatus();
+      const status = await getAiStatus(provider);
       if (notify && (!status.running || !status.model_available)) notifyAiServiceStatus(status);
       return status;
     } catch (err) {
@@ -1151,6 +1289,48 @@ export function ContentStudioPage() {
       if (notify) notifyAiServiceStatus(offline);
       return offline;
     }
+  }
+
+  async function handleTestLlmConnection() {
+    setTestingLlmConnection(true);
+    setError("");
+    try {
+      const result = await testInstructorLlmConnection({ provider: llmProvider });
+      setLlmConnection(result);
+      const label = connectionLabel(result);
+      appendGenerationLog({
+        level: result.reachable ? "info" : "error",
+        context: "Connection test",
+        provider: result.provider || llmProvider,
+        message: `${label}${result.configured_model ? ` - ${result.configured_model}` : ""}${result.error_category ? ` (${result.error_category})` : ""}`,
+      });
+      showToast({
+        title: label,
+        description: result.configured_model ? `Model: ${result.configured_model}` : undefined,
+        tone: result.reachable ? "success" : "warning",
+        duration: result.reachable ? 3200 : 7000,
+      });
+      return result;
+    } catch (err) {
+      const failed = { provider: llmProvider, reachable: false, error_category: "unreachable" };
+      setLlmConnection(failed);
+      notifyError(err, "Connection test failed");
+      return failed;
+    } finally {
+      setTestingLlmConnection(false);
+    }
+  }
+
+  function handleLlmProviderChange(provider) {
+    setLlmProvider(provider);
+    setLlmConnection(null);
+    appendGenerationLog({
+      level: "info",
+      context: "Provider",
+      provider,
+      message: `Selected ${provider}`,
+    });
+    localStorage.setItem("contentStudio:llmProvider", provider);
   }
 
   async function handleStartAi() {
@@ -1171,7 +1351,7 @@ export function ContentStudioPage() {
 
   useEffect(() => {
     refreshAiStatus({ notify: true });
-  }, []);
+  }, [llmProvider]);
 
   useEffect(() => {
     if (!classId) return;
@@ -1342,10 +1522,22 @@ export function ContentStudioPage() {
     try {
       if (activePlan.length === 0) throw new Error("Advanced options must include at least one question.");
       if (!activeUploadId || !activeExtractedText) throw new Error("Upload a lecture before generating questions.");
-      let status = await refreshAiStatus();
-      if (!status.running) status = await handleStartAi();
-      if (!status?.running) throw new Error("Generator is offline.");
-      if (!status.model_available) throw new Error("Model is missing.");
+      appendGenerationLog({
+        level: "info",
+        context: "Generation",
+        provider: llmProvider,
+        message: `Starting ${activePlan.length} question request${activePlan.length === 1 ? "" : "s"}.`,
+      });
+      if (llmProvider === "ollama-local") {
+        let status = await refreshAiStatus({ provider: llmProvider });
+        if (!status.running) status = await handleStartAi();
+        if (!status?.running) throw new Error("Generator is offline.");
+        if (!status.model_available) throw new Error("Model is missing.");
+      } else {
+        const connection = await handleTestLlmConnection();
+        if (!connection?.reachable) throw new Error(connectionLabel(connection));
+      }
+      const generationBatchId = createDebugUuid();
       const generatedQuestionsBatch = [];
       for (const [index, planItem] of activePlan.entries()) {
         setGenerationLabel(`Creating ${questionTypeLabel(planItem.type)} ${index + 1}...`);
@@ -1360,9 +1552,21 @@ export function ContentStudioPage() {
           difficulty: generationSettings.difficulty,
           output_language: generationSettings.output_language,
           question_index: index + 1,
+          question_number: index + 1,
+          batch_id: generationBatchId,
+          request_kind: "initial",
           avoid_questions: generatedQuestionsBatch.map((question) => question.question_text).filter(Boolean),
+          llm_provider: llmProvider,
         });
-        generatedQuestionsBatch.push(...generated);
+        generatedQuestionsBatch.push(...generated.map((question) => ({
+          ...question,
+          _debug_generation: {
+            batch_id: generationBatchId,
+            question_number: index + 1,
+            question_type: planItem.type,
+            parent_request_id: null,
+          },
+        })));
         setGenerationProgress({ current: index + 1, total: activePlan.length });
       }
       setGeneratedQuestions(generatedQuestionsBatch);
@@ -1371,6 +1575,12 @@ export function ContentStudioPage() {
       setGenerationLabel("Ready for review.");
       setGenerationPhase(generatedQuestionsBatch.length > 0 ? "reviewing" : "complete");
       if (generatedQuestionsBatch.length > 0) setCurrentStep("saved");
+      appendGenerationLog({
+        level: "info",
+        context: "Generation",
+        provider: llmProvider,
+        message: `Generated ${generatedQuestionsBatch.length} question${generatedQuestionsBatch.length === 1 ? "" : "s"}.`,
+      });
       notifySuccess("Questions generated");
     } catch (err) {
       notifyError(err, "Question generation failed");
@@ -1453,6 +1663,12 @@ export function ContentStudioPage() {
     try {
       const regeneratePayload = {
         upload_id: uploadId,
+        batch_id: debugGenerationFor(question).batch_id || createDebugUuid(),
+        question_number: debugGenerationFor(question).question_number || index + 1,
+        question_type: question.type,
+        request_kind: "manual_regeneration",
+        parent_request_id: debugGenerationFor(question).request_id || debugGenerationFor(question).parent_request_id || null,
+        llm_provider: llmProvider,
         question: {
           ...question,
           difficulty: question.difficulty || generationSettings.difficulty,
@@ -1469,9 +1685,23 @@ export function ContentStudioPage() {
             difficulty: question.difficulty || generationSettings.difficulty,
             output_language: generationSettings.output_language,
             question_index: index + 1,
+            question_number: index + 1,
+            batch_id: debugGenerationFor(question).batch_id || createDebugUuid(),
+            request_kind: "manual_regeneration",
+            parent_request_id: debugGenerationFor(question).request_id || debugGenerationFor(question).parent_request_id || null,
             avoid_questions: generatedQuestions.map((item) => item.question_text).filter(Boolean),
+            llm_provider: llmProvider,
           }))[0];
-      const regenerated = getRegeneratedQuestion(question, regeneratedResponse);
+      const regenerated = {
+        ...getRegeneratedQuestion(question, regeneratedResponse),
+        _debug_generation: {
+          ...debugGenerationFor(question),
+          batch_id: regeneratePayload.batch_id,
+          question_number: regeneratePayload.question_number,
+          question_type: question.type,
+          parent_request_id: regeneratePayload.parent_request_id,
+        },
+      };
       setGeneratedQuestions((current) => current.map((item, itemIndex) => (itemIndex === index ? regenerated : item)));
       if (question.question_id) {
         setSavedQuestions((current) => current.filter((item) => item.question_id !== question.question_id));
@@ -1750,6 +1980,15 @@ export function ContentStudioPage() {
 
       {classId && <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="min-w-0 grid gap-4">
+          <LLMDeploymentControls
+            provider={llmProvider}
+            onProviderChange={handleLlmProviderChange}
+            connection={llmConnection}
+            testing={testingLlmConnection}
+            onTest={handleTestLlmConnection}
+            disabled={workflowBusy}
+          />
+          <GenerationLogsPanel logs={generationLogs} onClear={() => setGenerationLogs([])} />
           {mainPanel}
         </div>
         <StudioSidePanel

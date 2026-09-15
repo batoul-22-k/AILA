@@ -1,6 +1,8 @@
+import logging
 from datetime import timedelta
 from hashlib import sha256
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -19,6 +21,9 @@ from app.instructor_services import (
     reconstruct_presentation,
     repair_and_validate_question_dicts,
     save_upload_file,
+    latest_question_debug_request,
+    redact_secret_text,
+    test_ollama_connection,
 )
 from app.models import (
     ActiveQuestionUpdate,
@@ -28,6 +33,7 @@ from app.models import (
     InstructorSessionOut,
     InstructorSessionStatusUpdate,
     InstructorUploadOut,
+    LLMConnectionTestRequest,
     ReconstructPresentationOut,
     ReconstructPresentationRequest,
     RegenerateQuestionRequest,
@@ -39,6 +45,7 @@ from app.realtime import manager
 from app.services import delete_session_cascade, generate_unique_session_code, get_live_session_stats, serialize_document
 
 router = APIRouter(prefix="/instructor", tags=["instructor"])
+logger = logging.getLogger(__name__)
 
 
 def live_question_notification_id(user_id: str, session_id: str, question_id: str) -> str:
@@ -125,11 +132,13 @@ async def generate_instructor_questions(
 ) -> list[InstructorQuestion]:
     await require_instructor_account_with_any_class(db, user)
     text = payload.extracted_text or ""
+    class_id = None
     if payload.upload_id:
         upload = await db[MongoCollections.lecture_uploads].find_one({"upload_id": payload.upload_id})
         if not upload:
             raise HTTPException(status_code=404, detail="Upload not found")
         await require_account_class_role(db, user, upload["class_id"], "instructor")
+        class_id = upload["class_id"]
         text = upload.get("cleaned_text") or upload.get("extracted_text") or text
     if not text.strip():
         raise HTTPException(status_code=400, detail="No extracted text available for question generation.")
@@ -143,14 +152,45 @@ async def generate_instructor_questions(
             output_language=payload.output_language,
             question_index=payload.question_index,
             avoid_questions=payload.avoid_questions,
+            debug_lecture_id=payload.upload_id,
+            debug_class_id=class_id,
+            debug_instructor_id=user["user_id"],
+            debug_batch_id=payload.batch_id,
+            debug_question_number=payload.question_number or payload.question_index,
+            debug_question_type=payload.question_type,
+            debug_request_kind=payload.request_kind,
+            debug_parent_request_id=payload.parent_request_id,
+            llm_provider=payload.llm_provider,
+            llm_model=payload.llm_model,
         )
     except Exception as exc:
+        logger.exception(
+            "Instructor question generation failed provider=%s model=%s upload_id=%s class_id=%s error=%s",
+            payload.llm_provider or "configured-default",
+            payload.llm_model or "configured-default",
+            payload.upload_id,
+            class_id,
+            redact_secret_text(str(exc)),
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     for question in questions:
         question.upload_id = payload.upload_id
         question.status = "generated"
     return questions
+
+
+@router.post("/llm/test-connection")
+async def test_instructor_llm_connection(
+    payload: LLMConnectionTestRequest,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    user: dict = Depends(get_current_user),
+) -> dict:
+    await require_instructor_account_with_any_class(db, user)
+    try:
+        return test_ollama_connection(payload.provider, payload.model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/questions/save", response_model=list[InstructorQuestion])
@@ -278,17 +318,42 @@ async def regenerate_instructor_question(
 ) -> InstructorQuestion:
     await require_instructor_account_with_any_class(db, user)
     text = ""
+    class_id = None
     if payload.upload_id:
         upload = await db[MongoCollections.lecture_uploads].find_one({"upload_id": payload.upload_id})
         if upload:
             await require_account_class_role(db, user, upload["class_id"], "instructor")
+            class_id = upload["class_id"]
             text = upload.get("cleaned_text") or upload.get("extracted_text") or ""
     if not text:
         text = payload.question.question_text
 
     try:
-        regenerated = call_ollama_for_questions(text, payload.question)[0]
+        previous_debug = latest_question_debug_request(payload.question.question_id)
+        regenerated = call_ollama_for_questions(
+            text,
+            payload.question,
+            debug_lecture_id=payload.upload_id,
+            debug_class_id=class_id,
+            debug_instructor_id=user["user_id"],
+            debug_batch_id=payload.batch_id or (previous_debug or {}).get("batch_id") or str(uuid4()),
+            debug_question_number=payload.question_number,
+            debug_question_type=payload.question_type or payload.question.type,
+            debug_request_kind=payload.request_kind or "manual_regeneration",
+            debug_parent_request_id=payload.parent_request_id or (previous_debug or {}).get("request_id"),
+            llm_provider=payload.llm_provider,
+            llm_model=payload.llm_model,
+        )[0]
     except Exception as exc:
+        logger.exception(
+            "Instructor question regeneration failed provider=%s model=%s upload_id=%s class_id=%s question_id=%s error=%s",
+            payload.llm_provider or "configured-default",
+            payload.llm_model or "configured-default",
+            payload.upload_id,
+            class_id,
+            payload.question.question_id,
+            redact_secret_text(str(exc)),
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     regenerated.question_id = payload.question.question_id or new_id("question")

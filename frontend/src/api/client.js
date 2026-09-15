@@ -13,6 +13,20 @@ function authHeaders() {
   return token ? { "X-Session-Token": token } : {};
 }
 
+function errorDetailText(detail) {
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object") {
+    if (typeof detail.message === "string") return detail.message;
+    if (typeof detail.error === "string") return detail.error;
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return "Request failed";
+    }
+  }
+  return "";
+}
+
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
@@ -28,7 +42,7 @@ async function request(path, options = {}) {
     let detail = body;
     try {
       const parsed = JSON.parse(body);
-      detail = parsed.detail || parsed.message || body;
+      detail = errorDetailText(parsed.detail || parsed.message) || body;
     } catch {
       detail = body;
     }
@@ -68,8 +82,9 @@ export function markNotificationsRead(notificationIds) {
   });
 }
 
-export function getAiStatus() {
-  return request("/api/ai/status");
+export function getAiStatus(provider) {
+  const query = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+  return request(`/api/ai/status${query}`);
 }
 
 export function startAiService() {
@@ -227,6 +242,13 @@ export function getInstructorUpload(uploadId) {
 
 export function generateInstructorQuestions(payload) {
   return request("/api/instructor/questions/generate", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function testInstructorLlmConnection(payload) {
+  return request("/api/instructor/llm/test-connection", {
     method: "POST",
     body: JSON.stringify(payload),
   });

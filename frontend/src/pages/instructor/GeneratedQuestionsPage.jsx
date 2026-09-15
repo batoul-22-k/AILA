@@ -14,13 +14,14 @@ export function GeneratedQuestionsPage() {
   const [questions, setQuestions] = useState(() => JSON.parse(localStorage.getItem("instructorGeneratedQuestions") || "[]"));
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [llmProvider, setLlmProvider] = useState(() => localStorage.getItem("contentStudio:llmProvider") || "ollama-local");
   const uploadId = localStorage.getItem("instructorUploadId");
   const extractedText = localStorage.getItem("instructorExtractedText");
 
   async function handleGenerate() {
     setLoading(true);
     try {
-      const result = await generateInstructorQuestions({ upload_id: uploadId, extracted_text: extractedText });
+      const result = await generateInstructorQuestions({ upload_id: uploadId, extracted_text: extractedText, llm_provider: llmProvider });
       setQuestions(result);
       localStorage.setItem("instructorGeneratedQuestions", JSON.stringify(result));
       showToast({ title: "Questions generated", tone: "success" });
@@ -58,6 +59,31 @@ export function GeneratedQuestionsPage() {
           </Button>
         }
       />
+
+      <DashboardCard>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <label className="grid gap-1 sm:w-52">
+            <span className="text-[11px] font-black uppercase tracking-wide text-slate-500">Deployment</span>
+            <select
+              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              value={llmProvider}
+              onChange={(event) => {
+                setLlmProvider(event.target.value);
+                localStorage.setItem("contentStudio:llmProvider", event.target.value);
+              }}
+            >
+              <option value="ollama-local">Local Ollama</option>
+              <option value="ollama-cloud">Cloud Ollama</option>
+            </select>
+          </label>
+          <label className="grid gap-1 sm:flex-1">
+            <span className="text-[11px] font-black uppercase tracking-wide text-slate-500">Model</span>
+            <select className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" value="configured" disabled>
+              <option value="configured">{llmProvider === "ollama-local" ? "Configured local model" : "Configured cloud model"}</option>
+            </select>
+          </label>
+        </div>
+      </DashboardCard>
 
       {!uploadId && !extractedText && (
         <EmptyState title="Upload content first" description="Add lecture material to begin." />

@@ -97,8 +97,7 @@ export function Sidebar({ role, expanded = false, pinned = false, onMouseEnter, 
         </button>
 
         <nav className="subtle-scroll mt-4 grid min-h-0 flex-1 content-start gap-1 overflow-y-auto">
-          <p className="role-sidebar-section-title px-3 pb-2 text-[11px] font-black uppercase tracking-wide text-slate-400">Navigation</p>
-          {navigation[role].map((item) => {
+                    {navigation[role].map((item) => {
             const ItemIcon = item.icon;
             const forceActive = (item.to === "/instructor/analytics" && location.pathname.startsWith("/instructor/at-risk"))
               || (item.matchPrefix && location.pathname.startsWith(item.matchPrefix));

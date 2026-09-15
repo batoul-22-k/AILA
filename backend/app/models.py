@@ -154,6 +154,7 @@ class InstructorQuestion(BaseModel):
     difficulty: str
     source_slide: int | None = None
     status: Literal["generated", "approved"] = "generated"
+    generation_metadata: dict = Field(default_factory=dict)
 
 
 class GenerateQuestionsRequest(BaseModel):
@@ -164,7 +165,13 @@ class GenerateQuestionsRequest(BaseModel):
     difficulty: str | None = None
     output_language: str | None = None
     question_index: int | None = None
+    question_number: int | None = None
+    batch_id: str | None = None
+    request_kind: Literal["initial", "automatic_retry", "quality_retry", "manual_regeneration"] = "initial"
+    parent_request_id: str | None = None
     avoid_questions: list[str] = Field(default_factory=list)
+    llm_provider: Literal["ollama-local", "ollama-cloud"] | None = None
+    llm_model: str | None = None
 
 
 class SaveInstructorQuestionsRequest(BaseModel):
@@ -175,6 +182,18 @@ class SaveInstructorQuestionsRequest(BaseModel):
 class RegenerateQuestionRequest(BaseModel):
     upload_id: str | None = None
     question: InstructorQuestion
+    question_type: Literal["mcq", "short_answer"] | None = None
+    question_number: int | None = None
+    batch_id: str | None = None
+    request_kind: Literal["initial", "automatic_retry", "quality_retry", "manual_regeneration"] = "manual_regeneration"
+    parent_request_id: str | None = None
+    llm_provider: Literal["ollama-local", "ollama-cloud"] | None = None
+    llm_model: str | None = None
+
+
+class LLMConnectionTestRequest(BaseModel):
+    provider: Literal["ollama-local", "ollama-cloud"] | None = None
+    model: str | None = None
 
 
 class ReconstructPresentationRequest(BaseModel):

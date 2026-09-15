@@ -10,6 +10,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.database import MongoCollections
 from app.ml.feature_schema import FEATURE_SCHEMA_VERSION, GAMIFICATION_CONTEXT_COLUMNS, PREDICTION_FEATURE_COLUMNS, feature_vector
 from app.ml.model_loader import load_prediction_model, model_feature_importance
+from app.ml.xai import local_shap_explanation
 from app.models import new_id, utc_now
 from app.response_scoring import final_response_label, final_response_score
 from app.services import serialize_document
@@ -417,31 +418,73 @@ def report_reason_factors(prediction: dict) -> list[dict]:
     return factors
 
 
-def explain_prediction(prediction: dict) -> dict:
-    features = prediction.get("features") or {}
-    importance = prediction.get("feature_importance") or []
+def shap_explanation_factors(prediction: dict) -> list[dict]:
+    xai = prediction.get("xai") or {}
+    if xai.get("method") != "shap":
+        return []
     factors = []
-    for item in importance:
-        feature_name = str(item.get("feature") or "")
-        if feature_name not in PREDICTION_FEATURE_COLUMNS:
-            continue
-        label = report_factor_label(feature_name)
+    for contribution in xai.get("feature_contributions") or []:
         try:
-            impact = float(item.get("importance") or 0)
+            impact = abs(float(contribution.get("shap_value") or 0))
+            shap_value = float(contribution.get("shap_value") or 0)
         except (TypeError, ValueError):
-            impact = 0.0
+            continue
         if impact <= 0:
+            continue
+        feature_name = str(contribution.get("feature") or "")
+        if feature_name not in PREDICTION_FEATURE_COLUMNS:
             continue
         factors.append(
             {
-                "factor": label,
-                "impact": round(impact, 4),
-                "value": round(float(features.get(feature_name, 0) or 0), 4),
-                "direction": report_factor_direction(label, features),
-                "source": "feature_importance",
+                "factor": contribution.get("label") or report_factor_label(feature_name),
+                "feature": feature_name,
+                "impact": round(impact, 6),
+                "value": round(float(contribution.get("value") or 0), 4),
+                "direction": contribution.get("factor_direction") or factor_direction_for_shap(prediction, shap_value),
+                "source": "shap",
+                "method": "shap",
+                "shap_value": round(shap_value, 6),
+                "xai_direction": contribution.get("direction"),
             }
         )
+    return factors
+
+
+def factor_direction_for_shap(prediction: dict, shap_value: float) -> str:
+    predicted = str(prediction.get("risk_level") or prediction.get("xai", {}).get("predicted_class") or "").lower()
+    if predicted == "low":
+        return "positive" if shap_value >= 0 else "negative"
+    return "negative" if shap_value >= 0 else "positive"
+
+
+def explain_prediction(prediction: dict) -> dict:
+    features = prediction.get("features") or {}
+    factors = shap_explanation_factors(prediction)
+    explanation_method = "SHAP local explanation" if factors else "Feature-importance fallback"
     if not factors:
+        importance = prediction.get("feature_importance") or []
+        for item in importance:
+            feature_name = str(item.get("feature") or "")
+            if feature_name not in PREDICTION_FEATURE_COLUMNS:
+                continue
+            label = report_factor_label(feature_name)
+            try:
+                impact = float(item.get("importance") or 0)
+            except (TypeError, ValueError):
+                impact = 0.0
+            if impact <= 0:
+                continue
+            factors.append(
+                {
+                    "factor": label,
+                    "impact": round(impact, 4),
+                    "value": round(float(features.get(feature_name, 0) or 0), 4),
+                    "direction": report_factor_direction(label, features),
+                    "source": "feature_importance",
+                }
+            )
+    if not factors:
+        explanation_method = "Rule-based fallback"
         factors = report_reason_factors(prediction)
     merged: dict[str, dict] = {}
     for factor in factors:
@@ -454,11 +497,18 @@ def explain_prediction(prediction: dict) -> dict:
     risk_level = str(prediction.get("risk_level") or "low").title()
     negative_names = ", ".join(row["factor"].lower() for row in negative[:3]) or "the available learning signals"
     positive_names = ", ".join(row["factor"].lower() for row in positive[:2]) or "some steady engagement signals"
-    summary = (
-        f"{prediction.get('student_name', 'This student')} is classified as {risk_level} Academic Risk mainly because "
-        f"{negative_names} influenced the prediction. {positive_names.title()} provide counter-signals where present."
-    )
+    if explanation_method == "SHAP local explanation":
+        summary = (
+            f"{prediction.get('student_name', 'This student')} is classified as {risk_level} Academic Risk because "
+            f"{negative_names} contributed to this local prediction. {positive_names.title()} acted as counter-signals where present."
+        )
+    else:
+        summary = (
+            f"{prediction.get('student_name', 'This student')} is classified as {risk_level} Academic Risk mainly because "
+            f"{negative_names} influenced the prediction. {positive_names.title()} provide counter-signals where present."
+        )
     return {
+        "method": explanation_method,
         "summary": summary,
         "positive_factors": positive,
         "negative_factors": negative,
@@ -620,6 +670,7 @@ def prediction_report_payload(
             for item in (prediction.get("feature_importance") or [])
             if item.get("feature") in PREDICTION_FEATURE_COLUMNS
         ],
+        "xai": prediction.get("xai"),
         "features": features,
         "model_feature_values": prediction.get("model_feature_values") or {
             name: prediction_feature_value(features, name)
@@ -1036,6 +1087,7 @@ def ml_prediction(feature: dict, model_bundle: Any) -> dict | None:
             f"XGBoost model predicted {risk_level} academic risk",
             f"High-risk probability: {round(high_risk_probability * 100, 2)}%",
         ]
+        xai = local_shap_explanation(model_bundle, normalized_feature, risk_level)
         return {
             "engagement_index": engagement_index,
             "derived_engagement_index": engagement_index,
@@ -1054,6 +1106,7 @@ def ml_prediction(feature: dict, model_bundle: Any) -> dict | None:
             "risk_reasons": reasons,
             "recommended_actions": ["Review model feature importance and current learning signals before acting"],
             "feature_importance": model_feature_importance(model, feature_columns),
+            "xai": xai,
             "predicted_score": engagement_index,
             "predicted_performance": engagement_index,
             "performance_level": engagement_level_from_index(engagement_index),
@@ -1390,6 +1443,7 @@ async def run_prediction_pipeline_for_class(db: AsyncIOMotorDatabase, class_id: 
                 "risk_reasons": prediction["risk_reasons"],
                 "recommended_actions": prediction["recommended_actions"],
                 "feature_importance": prediction["feature_importance"],
+                "xai": prediction.get("xai"),
                 "model_feature_values": model_feature_values(normalized_feature),
                 "engagement_context": engagement_context(feature),
                 # Compatibility aliases. The score is a behavioral engagement index,

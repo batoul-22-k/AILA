@@ -1,0 +1,18 @@
+[
+  {
+    "id": "lecture_001_sample_networks",
+    "topic": "Sample passage: Computer networks and latency",
+    "content": "[Slide 1]\nNetwork Latency\nLatency is the time it takes for data to travel from a sender to a receiver and back. In distributed learning platforms, high latency can delay quiz submissions, live feedback, and synchronization between instructor and student screens.\n\n[Slide 2]\nReducing Latency\nCaching frequently requested resources, placing servers geographically closer to students, and minimizing large media transfers can reduce perceived delay. Latency differs from bandwidth because bandwidth describes capacity, while latency describes delay."
+  },
+  {
+    "id": "lecture_002_sample_databases",
+    "topic": "Sample passage: Database normalization",
+    "content": "[Slide 1]\nDatabase Normalization\nNormalization organizes relational database tables to reduce redundancy and update anomalies. First normal form requires atomic values, while second normal form removes partial dependency on part of a composite key.\n\n[Slide 2]\nTradeoffs\nA normalized design improves consistency, but excessive normalization can require more joins and may slow read-heavy workloads. Designers often balance data integrity, query simplicity, and performance."
+  },
+  {
+    "id": "lecture_003_sample_learning_analytics",
+    "topic": "Sample passage: Learning analytics and intervention",
+    "content": "[Slide 1]\nLearning Analytics\nLearning analytics uses attendance, participation, assessment, and activity data to understand student progress. Risk indicators are useful only when instructors interpret them with context and avoid treating predictions as final judgments.\n\n[Slide 2]\nIntervention\nA strong intervention connects evidence to action. For example, low participation combined with missed sessions may suggest outreach, while low quiz accuracy after regular attendance may suggest targeted concept review."
+  }
+]
+

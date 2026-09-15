@@ -8,10 +8,14 @@ import socket
 import string
 import subprocess
 import time
+import traceback
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
+from uuid import uuid4
 
 import fitz
 import qrcode
@@ -23,56 +27,200 @@ from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
 from pptx.util import Inches, Pt
 
 from app.config import get_settings
+from app.debug_export import model_names_match, write_llm_debug_export
 from app.models import InstructorQuestion, new_id
 
 logger = logging.getLogger(__name__)
 
-
-def get_ollama_base_url() -> str:
-    parsed = urlsplit(get_settings().ollama_url)
-    return urlunsplit((parsed.scheme, parsed.netloc, "", "", "")).rstrip("/")
-
-
-def get_ollama_tags_url() -> str:
-    return f"{get_ollama_base_url()}/api/tags"
+LATEST_DEBUG_REQUEST_BY_QUESTION_ID: dict[str, dict] = {}
+ALLOWED_OLLAMA_PROVIDERS = {"ollama-local", "ollama-cloud"}
+PROVIDER_DEPLOYMENT_TYPES = {"ollama-local": "local", "ollama-cloud": "cloud"}
 
 
-def get_installed_ollama_models() -> list[str]:
-    request = urllib.request.Request(get_ollama_tags_url(), method="GET")
+def new_debug_uuid() -> str:
+    return str(uuid4())
+
+
+def remember_question_debug_request(question_id: str | None, request_metadata: dict | None) -> None:
+    if question_id and request_metadata:
+        LATEST_DEBUG_REQUEST_BY_QUESTION_ID[question_id] = dict(request_metadata)
+
+
+def latest_question_debug_request(question_id: str | None) -> dict | None:
+    if not question_id:
+        return None
+    return LATEST_DEBUG_REQUEST_BY_QUESTION_ID.get(question_id)
+
+
+@dataclass(frozen=True)
+class OllamaProviderConfig:
+    provider: str
+    deployment_type: str
+    base_url: str
+    generate_url: str
+    model: str
+    api_key: str | None = None
+    endpoint_label: str = ""
+
+
+def normalize_ollama_base_url(value: str) -> str:
+    clean = str(value or "").strip().rstrip("/")
+    if not clean:
+        return ""
+    parsed = urlsplit(clean)
+    if parsed.path.rstrip("/") == "/api/generate":
+        return urlunsplit((parsed.scheme, parsed.netloc, "", "", "")).rstrip("/")
+    return clean
+
+
+def safe_endpoint_label(provider: str, base_url: str) -> str:
+    parsed = urlsplit(str(base_url or ""))
+    host = parsed.hostname or ("localhost" if provider == "ollama-local" else "configured-cloud")
+    return f"{provider}:{host}"
+
+
+def redact_secret_text(value: str | None) -> str:
+    if value is None:
+        return ""
+    text = str(value)
+    settings = get_settings()
+    secrets = [settings.ollama_cloud_api_key]
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "[REDACTED]")
+    text = re.sub(r"(Authorization:\s*Bearer\s+)[^\s'\"]+", r"\1[REDACTED]", text, flags=re.IGNORECASE)
+    text = re.sub(r"(Bearer\s+)[A-Za-z0-9._~+/=-]+", r"\1[REDACTED]", text, flags=re.IGNORECASE)
+    return text
+
+
+def model_response_preview(raw: dict | None, limit: int = 1000) -> str:
+    if not isinstance(raw, dict):
+        return ""
+    response = str(raw.get("response") or "")
+    return redact_secret_text(response[:limit].replace("\n", " "))
+
+
+def categorize_ollama_error(provider_config: OllamaProviderConfig, http_status: int | None, exc: BaseException | None = None) -> str:
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return "timeout"
+    if http_status in {401, 403}:
+        return "authentication_failed"
+    if http_status == 404:
+        return "model_not_found"
+    if http_status == 429:
+        return "rate_limited"
+    if http_status is not None and http_status >= 500:
+        return "server_error"
+    if isinstance(exc, urllib.error.URLError):
+        return "local_ollama_not_running" if provider_config.deployment_type == "local" else "endpoint_unreachable"
+    if http_status is not None:
+        return "http_error"
+    return "request_failed"
+
+
+def resolve_ollama_provider(provider: str | None = None, model: str | None = None) -> OllamaProviderConfig:
+    settings = get_settings()
+    selected_provider = (provider or settings.ollama_provider or "ollama-local").strip()
+    if selected_provider not in ALLOWED_OLLAMA_PROVIDERS:
+        raise ValueError(f"Unsupported Ollama provider: {selected_provider}")
+
+    if selected_provider == "ollama-local":
+        base_url = normalize_ollama_base_url(settings.ollama_local_base_url or settings.ollama_url)
+        configured_model = settings.ollama_local_model or settings.ollama_model
+        api_key = None
+    else:
+        base_url = normalize_ollama_base_url(settings.ollama_cloud_base_url)
+        configured_model = settings.ollama_cloud_model
+        api_key = settings.ollama_cloud_api_key or None
+        if not base_url:
+            raise ValueError("OLLAMA_CLOUD_BASE_URL is not configured.")
+        if not configured_model:
+            raise ValueError("OLLAMA_CLOUD_MODEL is not configured.")
+
+    requested_model = (model or configured_model or "").strip()
+    if not requested_model:
+        raise ValueError(f"No model is configured for {selected_provider}.")
+    if requested_model != configured_model:
+        raise ValueError(f"Model {requested_model!r} is not allowed for provider {selected_provider}.")
+
+    deployment_type = PROVIDER_DEPLOYMENT_TYPES[selected_provider]
+    return OllamaProviderConfig(
+        provider=selected_provider,
+        deployment_type=deployment_type,
+        base_url=base_url,
+        generate_url=f"{base_url}/api/generate",
+        model=configured_model,
+        api_key=api_key,
+        endpoint_label=safe_endpoint_label(selected_provider, base_url),
+    )
+
+
+def get_ollama_base_url(provider: str | None = None) -> str:
+    return resolve_ollama_provider(provider).base_url
+
+
+def get_ollama_tags_url(provider: str | None = None) -> str:
+    return f"{get_ollama_base_url(provider)}/api/tags"
+
+
+def auth_headers_for_provider(provider_config: OllamaProviderConfig) -> dict[str, str]:
+    if provider_config.api_key:
+        return {"Authorization": f"Bearer {provider_config.api_key}"}
+    return {}
+
+
+def get_installed_ollama_models(provider: str | None = None) -> list[str]:
+    provider_config = resolve_ollama_provider(provider)
+    request = urllib.request.Request(
+        f"{provider_config.base_url}/api/tags",
+        headers=auth_headers_for_provider(provider_config),
+        method="GET",
+    )
     with urllib.request.urlopen(request, timeout=5) as response:
         raw = json.loads(response.read().decode("utf-8"))
     return [model.get("name", "") for model in raw.get("models", []) if model.get("name")]
 
 
-def get_ollama_status() -> dict:
-    settings = get_settings()
+def get_ollama_status(provider: str | None = None) -> dict:
     try:
-        models = get_installed_ollama_models()
-        requested = settings.ollama_model
+        provider_config = resolve_ollama_provider(provider)
+        models = get_installed_ollama_models(provider_config.provider)
+        requested = provider_config.model
         has_model = requested in models or f"{requested}:latest" in models
         return {
             "running": True,
-            "base_url": get_ollama_base_url(),
-            "generate_url": settings.ollama_url,
+            "provider": provider_config.provider,
+            "deployment_type": provider_config.deployment_type,
+            "endpoint_label": provider_config.endpoint_label,
             "model": requested,
             "models": models,
             "model_available": has_model,
             "message": "Ollama is reachable." if has_model else f"Ollama is running, but model '{requested}' is not pulled.",
         }
     except Exception as exc:
+        selected_provider = provider or get_settings().ollama_provider
+        model = ""
+        endpoint_label = selected_provider or "ollama-local"
+        try:
+            provider_config = resolve_ollama_provider(provider)
+            model = provider_config.model
+            endpoint_label = provider_config.endpoint_label
+        except Exception:
+            model = get_settings().ollama_model
         return {
             "running": False,
-            "base_url": get_ollama_base_url(),
-            "generate_url": settings.ollama_url,
-            "model": settings.ollama_model,
+            "provider": selected_provider,
+            "deployment_type": PROVIDER_DEPLOYMENT_TYPES.get(selected_provider, "local"),
+            "endpoint_label": endpoint_label,
+            "model": model,
             "models": [],
             "model_available": False,
-            "message": f"Ollama is not reachable: {exc}",
+            "message": f"Ollama is not reachable: {redact_secret_text(str(exc))}",
         }
 
 
 def start_ollama_server() -> dict:
-    status = get_ollama_status()
+    status = get_ollama_status("ollama-local")
     if status["running"]:
         return status
 
@@ -92,11 +240,251 @@ def start_ollama_server() -> dict:
 
     for _ in range(15):
         time.sleep(1)
-        status = get_ollama_status()
+        status = get_ollama_status("ollama-local")
         if status["running"]:
             return status
 
     raise RuntimeError("Started Ollama, but it did not become reachable within 15 seconds.")
+
+
+def build_ollama_payload(model: str, prompt: str, options: dict, keep_alive: str = "2m") -> dict:
+    return {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "format": "json",
+        "keep_alive": keep_alive,
+        "options": options,
+    }
+
+
+def safe_ollama_request_payload(payload: dict, provider_config: OllamaProviderConfig) -> dict:
+    return {
+        **payload,
+        "provider": provider_config.provider,
+        "deployment_type": provider_config.deployment_type,
+        "endpoint_label": provider_config.endpoint_label,
+    }
+
+
+def perform_ollama_generate_request(
+    *,
+    provider: str,
+    base_url: str,
+    model: str,
+    api_key: str | None,
+    prompt: str,
+    options: dict,
+    timeout: int,
+    endpoint_label: str | None = None,
+) -> dict:
+    provider_config = OllamaProviderConfig(
+        provider=provider,
+        deployment_type=PROVIDER_DEPLOYMENT_TYPES.get(provider, "cloud" if "cloud" in provider else "local"),
+        base_url=normalize_ollama_base_url(base_url),
+        generate_url=f"{normalize_ollama_base_url(base_url)}/api/generate",
+        model=model,
+        api_key=api_key,
+        endpoint_label=endpoint_label or safe_endpoint_label(provider, base_url),
+    )
+    payload = build_ollama_payload(model, prompt, options)
+    headers = {"Content-Type": "application/json", **auth_headers_for_provider(provider_config)}
+    request = urllib.request.Request(
+        provider_config.generate_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    request_started = time.perf_counter()
+    raw_response_text: str | None = None
+    http_status: int | None = None
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            http_status = getattr(response, "status", None)
+            raw_response_text = response.read().decode("utf-8")
+        elapsed_ms = round((time.perf_counter() - request_started) * 1000)
+        parsed_raw = json.loads(raw_response_text)
+        if not isinstance(parsed_raw, dict):
+            raise RuntimeError("Ollama returned a non-object JSON response.")
+        return {
+            "provider_config": provider_config,
+            "payload": payload,
+            "safe_payload": safe_ollama_request_payload(payload, provider_config),
+            "raw_response_text": raw_response_text,
+            "parsed_response": parsed_raw,
+            "http_status": http_status,
+            "elapsed_ms": elapsed_ms,
+            "error": None,
+            "error_category": None,
+        }
+    except (TimeoutError, socket.timeout) as exc:
+        elapsed_ms = round((time.perf_counter() - request_started) * 1000)
+        category = categorize_ollama_error(provider_config, None, exc)
+        return {
+            "provider_config": provider_config,
+            "payload": payload,
+            "safe_payload": safe_ollama_request_payload(payload, provider_config),
+            "raw_response_text": raw_response_text,
+            "parsed_response": None,
+            "http_status": None,
+            "elapsed_ms": elapsed_ms,
+            "error": redact_secret_text(str(exc) or "Ollama request timed out."),
+            "error_category": category,
+            "exception": exc,
+        }
+    except urllib.error.HTTPError as exc:
+        elapsed_ms = round((time.perf_counter() - request_started) * 1000)
+        try:
+            detail = exc.read().decode("utf-8")
+        except Exception:
+            detail = str(exc)
+        raw_response_text = detail
+        category = categorize_ollama_error(provider_config, exc.code, exc)
+        return {
+            "provider_config": provider_config,
+            "payload": payload,
+            "safe_payload": safe_ollama_request_payload(payload, provider_config),
+            "raw_response_text": raw_response_text,
+            "parsed_response": None,
+            "http_status": exc.code,
+            "elapsed_ms": elapsed_ms,
+            "error": redact_secret_text(f"Ollama returned HTTP {exc.code}: {detail}"),
+            "error_category": category,
+            "exception": exc,
+        }
+    except urllib.error.URLError as exc:
+        elapsed_ms = round((time.perf_counter() - request_started) * 1000)
+        category = categorize_ollama_error(provider_config, None, exc)
+        return {
+            "provider_config": provider_config,
+            "payload": payload,
+            "safe_payload": safe_ollama_request_payload(payload, provider_config),
+            "raw_response_text": raw_response_text,
+            "parsed_response": None,
+            "http_status": None,
+            "elapsed_ms": elapsed_ms,
+            "error": redact_secret_text(str(exc)),
+            "error_category": category,
+            "exception": exc,
+        }
+    except json.JSONDecodeError as exc:
+        elapsed_ms = round((time.perf_counter() - request_started) * 1000)
+        return {
+            "provider_config": provider_config,
+            "payload": payload,
+            "safe_payload": safe_ollama_request_payload(payload, provider_config),
+            "raw_response_text": raw_response_text,
+            "parsed_response": None,
+            "http_status": http_status,
+            "elapsed_ms": elapsed_ms,
+            "error": "Ollama returned malformed JSON.",
+            "error_category": "malformed_json",
+            "exception": exc,
+        }
+    except RuntimeError as exc:
+        elapsed_ms = round((time.perf_counter() - request_started) * 1000)
+        return {
+            "provider_config": provider_config,
+            "payload": payload,
+            "safe_payload": safe_ollama_request_payload(payload, provider_config),
+            "raw_response_text": raw_response_text,
+            "parsed_response": None,
+            "http_status": http_status,
+            "elapsed_ms": elapsed_ms,
+            "error": redact_secret_text(str(exc)),
+            "error_category": "malformed_json",
+            "exception": exc,
+        }
+
+
+def provider_config_metadata(provider_config: OllamaProviderConfig, parsed_response: dict | None = None, http_status: int | None = None, elapsed_ms: int | None = None) -> dict:
+    response_model = parsed_response.get("model") if isinstance(parsed_response, dict) else None
+    return {
+        "provider": provider_config.provider,
+        "deployment_type": provider_config.deployment_type,
+        "requested_model": provider_config.model,
+        "response_model": response_model,
+        "model_name_match": model_names_match(provider_config.model, response_model) if response_model else None,
+        "endpoint_label": provider_config.endpoint_label,
+        "processing_time_ms": elapsed_ms,
+        "prompt_tokens": parsed_response.get("prompt_eval_count") if isinstance(parsed_response, dict) else None,
+        "completion_tokens": parsed_response.get("eval_count") if isinstance(parsed_response, dict) else None,
+        "total_tokens": (
+            parsed_response.get("prompt_eval_count") + parsed_response.get("eval_count")
+            if isinstance(parsed_response, dict)
+            and isinstance(parsed_response.get("prompt_eval_count"), int)
+            and isinstance(parsed_response.get("eval_count"), int)
+            else None
+        ),
+        "done": parsed_response.get("done") if isinstance(parsed_response, dict) else None,
+        "done_reason": parsed_response.get("done_reason") if isinstance(parsed_response, dict) else None,
+        "http_status": http_status,
+    }
+
+
+def generated_question_metadata(request_metadata: dict | None, provider_config: OllamaProviderConfig) -> dict:
+    metadata = request_metadata or {}
+    keys = [
+        "provider",
+        "deployment_type",
+        "requested_model",
+        "response_model",
+        "model_name_match",
+        "endpoint_label",
+        "processing_time_ms",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "done",
+        "done_reason",
+        "http_status",
+    ]
+    generated = {key: metadata.get(key) for key in keys}
+    generated["provider"] = generated.get("provider") or provider_config.provider
+    generated["deployment_type"] = generated.get("deployment_type") or provider_config.deployment_type
+    generated["requested_model"] = generated.get("requested_model") or provider_config.model
+    generated["endpoint_label"] = generated.get("endpoint_label") or provider_config.endpoint_label
+    return generated
+
+
+def test_ollama_connection(provider: str | None = None, model: str | None = None) -> dict:
+    provider_config = resolve_ollama_provider(provider, model)
+    settings = get_settings()
+    result = perform_ollama_generate_request(
+        provider=provider_config.provider,
+        base_url=provider_config.base_url,
+        model=provider_config.model,
+        api_key=provider_config.api_key,
+        prompt='Return {"ok": true}.',
+        options={
+            "temperature": 0,
+            "num_ctx": min(settings.ollama_num_ctx, 1024),
+            "num_predict": 16,
+            "num_gpu": settings.ollama_num_gpu,
+        },
+        timeout=min(settings.ollama_timeout_seconds, 30),
+        endpoint_label=provider_config.endpoint_label,
+    )
+    parsed = result.get("parsed_response")
+    reachable = result.get("http_status") == 200 and isinstance(parsed, dict) and parsed.get("done") is True
+    error_category = result.get("error_category")
+    if result.get("http_status") == 200 and isinstance(parsed, dict):
+        if parsed.get("done") is False:
+            error_category = "incomplete_response"
+        elif parsed.get("done") is True:
+            error_category = None
+    return {
+        "provider": provider_config.provider,
+        "configured_model": provider_config.model,
+        "deployment_type": provider_config.deployment_type,
+        "endpoint_label": provider_config.endpoint_label,
+        "reachable": reachable,
+        "http_status": result.get("http_status"),
+        "elapsed_time_ms": result.get("elapsed_ms"),
+        "elapsed_seconds": round((result.get("elapsed_ms") or 0) / 1000, 4),
+        "response_model": parsed.get("model") if isinstance(parsed, dict) else None,
+        "error_category": error_category,
+    }
 
 
 def get_storage_root() -> Path:
@@ -636,7 +1024,7 @@ def build_question_prompt(
         )
         return f"""
 You are generating one instructor-reviewed classroom engagement question.
-Return only valid JSON. Do not include markdown fences, commentary, or extra text.
+Return only minified valid JSON. Do not include markdown fences, commentary, or extra text.
 Return exactly one question object inside the questions array.
 Do not create a second question.
 Do not leave any field empty.
@@ -653,10 +1041,11 @@ Ask about a specific decision, consequence, comparison, problem, solution, trade
 Avoid simple definition questions.
 Avoid questions based only on slide titles; use the slide details and relationships between ideas.
 Prefer understanding and application questions over recall-only questions.
-Question text must be 25 words or fewer.
+Question text must be 16 words or fewer.
 For multiple choice questions, use exactly 4 answer options.
-For multiple choice questions, every option must be 15 words or fewer.
+For multiple choice questions, every option must be 6 words or fewer.
 For multiple choice questions, options must be short statements, not paragraphs.
+For multiple choice questions, options must not contain commas, semicolons, or multiple clauses.
 For multiple choice questions, do not paste full slide sentences into options.
 For multiple choice questions, keep all answer choices balanced in length.
 For multiple choice questions, make every distractor plausible, related to the same concept, and distinct from the correct answer.
@@ -670,6 +1059,7 @@ For short answer questions, do not require a paragraph, long explanation, or mul
 For short answer questions, never include the correct answer, answer phrase, or a near-copy of it in question_text.
 For short answer questions, do not write "Example:" in question_text or copy example text from the slide into question_text.
 Make question_text ask what, why, or how; keep the expected answer hidden in correct_answer only.
+Explanation must be 8 words or fewer.
 Include source_slide when a slide number is available.
 Rule: {answer_rule}.
 {options_instruction}
@@ -686,20 +1076,7 @@ Difficulty: {difficulty or "Medium"}
 Output language: {output_language or "en"}
 
 JSON shape:
-{{
-  "questions": [
-    {{
-      "type": "{question_type}",
-      "question_text": "Which statement correctly describes the concept?",
-      "options": {example_options},
-      "correct_answer": "{example_answer}",
-      "explanation": "One short reason why the answer is correct.",
-      "bloom_level": "{bloom_level or "Understand"}",
-      "difficulty": "{difficulty or "Medium"}",
-      "source_slide": null
-    }}
-  ]
-}}
+{{"questions":[{{"type":"{question_type}","question_text":"Which rule prevents routing loops?","options":{example_options},"correct_answer":"{example_answer}","explanation":"Supported by the slide.","bloom_level":"{bloom_level or "Understand"}","difficulty":"{difficulty or "Medium"}","source_slide":null}}]}}
 """.strip()
 
     return f"""
@@ -763,6 +1140,65 @@ JSON shape:
     }}
   ]
 }}
+""".strip()
+
+
+def build_compact_retry_question_prompt(
+    text: str,
+    question_type: str,
+    bloom_level: str | None = None,
+    difficulty: str | None = None,
+    output_language: str | None = None,
+    question_index: int | None = None,
+    avoid_questions: list[str] | None = None,
+) -> str:
+    settings = get_settings()
+    base = build_prompt_context(text, min(settings.ollama_prompt_chars, 700))
+    avoid = "\n".join(f"- {question}" for question in (avoid_questions or []) if question)
+    avoid_block = f"\nAvoid these previous questions:\n{avoid}\n" if avoid else ""
+    if question_type == "mcq":
+        schema = (
+            '{"questions":[{"type":"mcq","question_text":"...","options":["...","...","...","..."],'
+            '"correct_answer":"...","explanation":"...","bloom_level":"'
+            f'{bloom_level or "Understand"}","difficulty":"{difficulty or "Medium"}","source_slide":null}}]}}'
+        )
+        type_rules = """
+MCQ hard limits:
+- question_text: 12 words maximum
+- each option: 4 words maximum
+- correct_answer must exactly equal one option
+- explanation: 6 words maximum
+- total response under 90 words
+""".strip()
+    else:
+        schema = (
+            '{"questions":[{"type":"short_answer","question_text":"...","options":[],'
+            '"correct_answer":"...","explanation":"...","bloom_level":"'
+            f'{bloom_level or "Understand"}","difficulty":"{difficulty or "Medium"}","source_slide":null}}]}}'
+        )
+        type_rules = """
+Short-answer hard limits:
+- question_text: 12 words maximum
+- options must be []
+- correct_answer: 8 words maximum
+- explanation: 6 words maximum
+- total response under 70 words
+""".strip()
+
+    return f"""
+Return one line of minified JSON only.
+Stop immediately after the final closing brace.
+Do not include markdown, commentary, labels, or a second object.
+Generate exactly one {question_type} question from the lecture excerpt.
+Use this exact root and keys: {schema}
+{type_rules}
+Bloom level: {bloom_level or "Understand"}
+Difficulty: {difficulty or "Medium"}
+Output language: {output_language or "en"}
+Question number: {question_index or 1}
+{avoid_block}
+Lecture excerpt:
+{base}
 """.strip()
 
 
@@ -941,10 +1377,7 @@ def question_dicts_from_ollama_raw(
     avoid_questions: list[str] | None = None,
 ) -> list[dict]:
     model_response = raw.get("response", raw)
-    try:
-        parsed = parse_ollama_question_payload(model_response)
-    except RuntimeError:
-        return [fallback_question_from_lecture(text, question_type, bloom_level, difficulty, question_index, avoid_questions)]
+    parsed = parse_ollama_question_payload(model_response)
 
     questions = parsed.get("questions", parsed if isinstance(parsed, list) else [])
     if not isinstance(questions, list):
@@ -987,8 +1420,19 @@ def call_ollama_for_questions(
     output_language: str | None = None,
     question_index: int | None = None,
     avoid_questions: list[str] | None = None,
+    debug_lecture_id: str | None = None,
+    debug_class_id: str | None = None,
+    debug_instructor_id: str | None = None,
+    debug_batch_id: str | None = None,
+    debug_question_number: int | None = None,
+    debug_question_type: str | None = None,
+    debug_request_kind: str = "initial",
+    debug_parent_request_id: str | None = None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
 ) -> list[InstructorQuestion]:
     settings = get_settings()
+    provider_config = resolve_ollama_provider(llm_provider, llm_model)
     options = {
         "temperature": 1,
         "num_ctx": settings.ollama_num_ctx,
@@ -998,50 +1442,195 @@ def call_ollama_for_questions(
     if settings.ollama_num_thread > 0:
         options["num_thread"] = settings.ollama_num_thread
 
-    def request_questions(prompt: str, attempts: int = 2) -> tuple[dict | None, RuntimeError | None]:
-        payload = {
-            "model": settings.ollama_model,
-            "prompt": prompt,
-            "stream": False,
-            "format": "json",
-            "keep_alive": "2m",
-            "options": options,
-        }
+    def export_request_debug(
+        *,
+        timestamp: datetime,
+        prompt: str,
+        payload: dict,
+        raw_response: str | None,
+        parsed_response: dict | list | str | None,
+        generation_success: bool,
+        processing_time_ms: int | None,
+        http_status: int | None,
+        request_metadata: dict,
+        error: dict | None,
+    ) -> None:
+        write_llm_debug_export(
+            timestamp=timestamp,
+            lecture_id=debug_lecture_id,
+            class_id=debug_class_id,
+            instructor_id=debug_instructor_id,
+            model=provider_config.model,
+            provider=provider_config.provider,
+            system_prompt="",
+            user_prompt=prompt,
+            request_payload=payload,
+            raw_response=raw_response,
+            parsed_ollama_response=parsed_response,
+            generation_success=generation_success,
+            processing_time_ms=processing_time_ms,
+            http_status=http_status,
+            request_metadata=request_metadata,
+            input_metadata={
+                "question_type": debug_question_type or question_type,
+                "question_number": debug_question_number or question_index,
+                "bloom_level": bloom_level,
+                "difficulty": difficulty,
+                "output_language": output_language,
+                "requested_question_count": 1 if (debug_question_type or question_type) else 4,
+                "previous_questions": avoid_questions or [],
+                "provider": provider_config.provider,
+                "deployment_type": provider_config.deployment_type,
+                "requested_model": provider_config.model,
+                "endpoint_label": provider_config.endpoint_label,
+            },
+            lecture_text=text,
+            error=error,
+        )
+
+    def request_questions(
+        prompt: str,
+        attempts: int = 2,
+        request_kind: str | None = None,
+        parent_request_id: str | None = None,
+        starting_attempt_number: int = 1,
+    ) -> tuple[dict | None, RuntimeError | None, dict | None]:
         last_error: RuntimeError | None = None
+        previous_request_id = parent_request_id
+        last_request_metadata: dict | None = None
         for attempt in range(attempts):
-            request = urllib.request.Request(
-                settings.ollama_url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
+            request_timestamp = datetime.now(timezone.utc)
+            current_kind = request_kind or debug_request_kind or "initial"
+            if attempt > 0:
+                current_kind = "automatic_retry"
+            request_metadata = {
+                "request_id": new_debug_uuid(),
+                "batch_id": debug_batch_id,
+                "question_number": debug_question_number,
+                "question_type": debug_question_type,
+                "attempt_number": starting_attempt_number + attempt,
+                "request_kind": current_kind,
+                "is_retry": attempt > 0 or current_kind == "quality_retry",
+                "is_regeneration": current_kind == "manual_regeneration",
+                "parent_request_id": previous_request_id if attempt > 0 or current_kind in {"quality_retry", "manual_regeneration"} else None,
+                "provider": provider_config.provider,
+                "deployment_type": provider_config.deployment_type,
+                "requested_model": provider_config.model,
+                "endpoint_label": provider_config.endpoint_label,
+            }
+            last_request_metadata = request_metadata
+            result = perform_ollama_generate_request(
+                provider=provider_config.provider,
+                base_url=provider_config.base_url,
+                model=provider_config.model,
+                api_key=provider_config.api_key,
+                prompt=prompt,
+                options=options,
+                timeout=settings.ollama_timeout_seconds,
+                endpoint_label=provider_config.endpoint_label,
             )
-            try:
-                with urllib.request.urlopen(request, timeout=settings.ollama_timeout_seconds) as response:
-                    return json.loads(response.read().decode("utf-8")), None
-            except (TimeoutError, socket.timeout) as exc:
-                last_error = RuntimeError(
+            payload = result["safe_payload"]
+            parsed_raw = result.get("parsed_response")
+            raw_response_text = result.get("raw_response_text")
+            model_response_text = parsed_raw.get("response", raw_response_text) if isinstance(parsed_raw, dict) else raw_response_text
+            response_metadata = provider_config_metadata(provider_config, parsed_raw, result.get("http_status"), result.get("elapsed_ms"))
+            request_metadata.update(response_metadata)
+            if result.get("error") is None and isinstance(parsed_raw, dict) and parsed_raw.get("done_reason") == "length":
+                result["error"] = "Ollama output reached num_predict before completing JSON."
+                result["error_category"] = "truncated_output"
+            elif result.get("error") is None and isinstance(parsed_raw, dict) and parsed_raw.get("done") is True:
+                export_request_debug(
+                    timestamp=request_timestamp,
+                    prompt=prompt,
+                    payload=payload,
+                    raw_response=model_response_text,
+                    parsed_response=parsed_raw,
+                    generation_success=True,
+                    processing_time_ms=result.get("elapsed_ms"),
+                    http_status=result.get("http_status"),
+                    request_metadata=request_metadata,
+                    error=None,
+                )
+                return parsed_raw, None, request_metadata
+
+            if result.get("error") is None and isinstance(parsed_raw, dict) and parsed_raw.get("done") is False:
+                result["error"] = "Ollama returned done=false for a non-streaming generation response."
+                result["error_category"] = "incomplete_response"
+
+            error_category = result.get("error_category") or "request_failed"
+            if error_category == "timeout":
+                error_message = (
                     f"Ollama timed out after {settings.ollama_timeout_seconds}s while generating questions. "
                     "The model may still be loading or running slowly on CPU. Try again once it is warm, "
                     f"or use a smaller model / increase OLLAMA_TIMEOUT_SECONDS."
                 )
-                last_error.__cause__ = exc
-            except urllib.error.HTTPError as exc:
-                try:
-                    detail = exc.read().decode("utf-8")
-                except Exception:
-                    detail = str(exc)
-                last_error = RuntimeError(f"Ollama returned HTTP {exc.code}: {detail}")
-                last_error.__cause__ = exc
-            except urllib.error.URLError as exc:
-                last_error = RuntimeError(f"Ollama is not reachable at {settings.ollama_url}. Start Ollama and pull {settings.ollama_model}.")
-                last_error.__cause__ = exc
-            except json.JSONDecodeError as exc:
-                last_error = RuntimeError("Ollama returned a non-JSON response.")
-                last_error.__cause__ = exc
+            elif error_category == "local_ollama_not_running":
+                error_message = f"Local Ollama is not reachable. Start Ollama and pull {provider_config.model}."
+            elif error_category == "endpoint_unreachable":
+                error_message = "Cloud Ollama endpoint is unreachable."
+            elif error_category == "authentication_failed":
+                error_message = "Ollama cloud authentication failed."
+            elif error_category == "model_not_found":
+                error_message = f"Configured Ollama model is unavailable: {provider_config.model}."
+            elif error_category == "rate_limited":
+                error_message = "Ollama request was rate limited (HTTP 429)."
+            elif error_category == "server_error":
+                error_message = f"Ollama returned a server error (HTTP {result.get('http_status')})."
+            elif error_category == "malformed_json":
+                error_message = "Ollama returned a malformed JSON response."
+            elif error_category == "incomplete_response":
+                error_message = "Ollama returned done=false for a non-streaming generation response."
+            elif error_category == "truncated_output":
+                error_message = (
+                    "Ollama output was truncated before valid question JSON was complete "
+                    f"(done_reason=length, completion_tokens={request_metadata.get('completion_tokens')}). "
+                    "Increase OLLAMA_NUM_PREDICT or ask for a shorter question."
+                )
+            else:
+                error_message = result.get("error") or "Ollama request failed."
 
-            if attempt == 0 and attempts > 1:
+            request_metadata["error_category"] = error_category
+            request_metadata["error_message"] = redact_secret_text(error_message)
+            if error_category in {"truncated_output", "malformed_json", "incomplete_response"} and isinstance(parsed_raw, dict):
+                logger.warning(
+                    "Ollama generation output failure provider=%s model=%s done=%s done_reason=%s prompt_tokens=%s completion_tokens=%s http_status=%s preview=%s",
+                    provider_config.provider,
+                    provider_config.model,
+                    parsed_raw.get("done"),
+                    parsed_raw.get("done_reason"),
+                    request_metadata.get("prompt_tokens"),
+                    request_metadata.get("completion_tokens"),
+                    result.get("http_status"),
+                    model_response_preview(parsed_raw),
+                )
+
+            last_error = RuntimeError(redact_secret_text(error_message))
+            exc = result.get("exception")
+            if isinstance(exc, BaseException):
+                last_error.__cause__ = exc
+            export_request_debug(
+                timestamp=request_timestamp,
+                prompt=prompt,
+                payload=payload,
+                raw_response=model_response_text or raw_response_text,
+                parsed_response=parsed_raw,
+                generation_success=False,
+                processing_time_ms=result.get("elapsed_ms"),
+                http_status=result.get("http_status"),
+                request_metadata=request_metadata,
+                error={
+                    "type": error_category,
+                    "message": str(last_error),
+                    "traceback": "" if exc is None else redact_secret_text("".join(traceback.format_exception(exc))),
+                },
+            )
+
+            if attempt == 0 and attempts > 1 and error_category != "truncated_output":
+                previous_request_id = request_metadata["request_id"]
                 time.sleep(1)
-        return None, last_error
+                continue
+            break
+        return None, last_error, last_request_metadata
 
     prompt = build_question_prompt(
         text,
@@ -1053,13 +1642,100 @@ def call_ollama_for_questions(
         question_index,
         avoid_questions,
     )
-    raw, last_error = request_questions(prompt)
+    raw, last_error, source_request_metadata = request_questions(prompt, parent_request_id=debug_parent_request_id)
 
     if raw is None:
-        logger.warning("Falling back to local lecture question generation after Ollama failure: %s", last_error)
-        return fallback_questions_from_lecture(text, question_type, bloom_level, difficulty, question_index, avoid_questions)
+        if question_type and (source_request_metadata or {}).get("error_category") == "truncated_output":
+            compact_prompt = build_compact_retry_question_prompt(
+                text,
+                question_type,
+                bloom_level,
+                difficulty,
+                output_language,
+                question_index,
+                avoid_questions,
+            )
+            logger.info(
+                "Retrying Ollama generation with compact prompt after truncation provider=%s model=%s question_type=%s",
+                provider_config.provider,
+                provider_config.model,
+                question_type,
+            )
+            compact_raw, compact_error, compact_request_metadata = request_questions(
+                compact_prompt,
+                attempts=1,
+                request_kind="compact_truncation_retry",
+                parent_request_id=(source_request_metadata or {}).get("request_id"),
+                starting_attempt_number=((source_request_metadata or {}).get("attempt_number") or 1) + 1,
+            )
+            if compact_raw is not None:
+                raw = compact_raw
+                source_request_metadata = compact_request_metadata
+            else:
+                raise compact_error or last_error or RuntimeError("Ollama request failed after compact retry.")
+        else:
+            raise last_error or RuntimeError("Ollama request failed.")
 
-    raw_questions = question_dicts_from_ollama_raw(raw, text, question_type, bloom_level, difficulty, question_index, avoid_questions)
+    parse_error: RuntimeError | None = None
+    try:
+        raw_questions = question_dicts_from_ollama_raw(raw, text, question_type, bloom_level, difficulty, question_index, avoid_questions)
+    except RuntimeError as exc:
+        parse_error = exc
+        raw_questions = []
+
+    if parse_error and question_type and (source_request_metadata or {}).get("request_kind") != "compact_truncation_retry":
+        compact_prompt = build_compact_retry_question_prompt(
+            text,
+            question_type,
+            bloom_level,
+            difficulty,
+            output_language,
+            question_index,
+            avoid_questions,
+        )
+        logger.info(
+            "Retrying Ollama generation with compact prompt after malformed JSON provider=%s model=%s question_type=%s",
+            provider_config.provider,
+            provider_config.model,
+            question_type,
+        )
+        compact_raw, compact_error, compact_request_metadata = request_questions(
+            compact_prompt,
+            attempts=1,
+            request_kind="compact_truncation_retry",
+            parent_request_id=(source_request_metadata or {}).get("request_id"),
+            starting_attempt_number=((source_request_metadata or {}).get("attempt_number") or 1) + 1,
+        )
+        if compact_raw is not None:
+            raw = compact_raw
+            source_request_metadata = compact_request_metadata
+            try:
+                raw_questions = question_dicts_from_ollama_raw(raw, text, question_type, bloom_level, difficulty, question_index, avoid_questions)
+                parse_error = None
+            except RuntimeError as exc:
+                parse_error = exc
+        else:
+            parse_error = compact_error or parse_error
+
+    if parse_error:
+        preview = model_response_preview(raw)
+        logger.warning(
+            "Ollama returned malformed question JSON provider=%s model=%s done=%s done_reason=%s prompt_tokens=%s completion_tokens=%s http_status=%s preview=%s",
+            provider_config.provider,
+            provider_config.model,
+            raw.get("done") if isinstance(raw, dict) else None,
+            raw.get("done_reason") if isinstance(raw, dict) else None,
+            raw.get("prompt_eval_count") if isinstance(raw, dict) else None,
+            raw.get("eval_count") if isinstance(raw, dict) else None,
+            (source_request_metadata or {}).get("http_status"),
+            preview,
+        )
+        raise RuntimeError(
+            "Ollama returned malformed question JSON "
+            f"(done_reason={(raw or {}).get('done_reason') if isinstance(raw, dict) else None}, "
+            f"completion_tokens={(raw or {}).get('eval_count') if isinstance(raw, dict) else None}). "
+            f"Preview: {preview}"
+        ) from parse_error
     questions, had_quality_failure = repair_and_validate_question_dicts(
         raw_questions,
         text,
@@ -1070,7 +1746,13 @@ def call_ollama_for_questions(
         avoid_questions,
     )
     if had_quality_failure:
-        strict_raw, strict_error = request_questions(prompt + strict_quality_suffix(), attempts=1)
+        strict_raw, strict_error, strict_request_metadata = request_questions(
+            prompt + strict_quality_suffix(),
+            attempts=1,
+            request_kind="quality_retry",
+            parent_request_id=(source_request_metadata or {}).get("request_id"),
+            starting_attempt_number=((source_request_metadata or {}).get("attempt_number") or 1) + 1,
+        )
         if strict_raw is not None:
             strict_questions = question_dicts_from_ollama_raw(strict_raw, text, question_type, bloom_level, difficulty, question_index, avoid_questions)
             strict_cleaned, _strict_failed = repair_and_validate_question_dicts(
@@ -1084,6 +1766,7 @@ def call_ollama_for_questions(
             )
             if strict_cleaned:
                 questions = strict_cleaned
+                source_request_metadata = strict_request_metadata
         elif strict_error:
             logger.info("Strict question regeneration failed; using clean local fallback: %s", strict_error)
 
@@ -1098,6 +1781,9 @@ def call_ollama_for_questions(
             question.difficulty = difficulty or question.difficulty
             if question_type == "short_answer":
                 question.options = []
+    for question in normalized:
+        question.generation_metadata = generated_question_metadata(source_request_metadata, provider_config)
+        remember_question_debug_request(question.question_id, source_request_metadata)
     return normalized
 
 

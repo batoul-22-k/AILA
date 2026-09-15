@@ -55,7 +55,7 @@ const MODEL_FACTOR_LABELS = new Set([
   "Weak Concepts",
   "Bloom Mastery Gaps",
 ]);
-const BLOOM_FACTOR_LABEL = "Bloom Mastery Gaps";
+const BLOOM_FACTOR_DISPLAY_LABEL = "Weak Bloom Levels";
 const BLOOM_MASTERY_THRESHOLD = 60;
 const BLOOM_GAP_TOOLTIP = "Only Bloom levels with answered questions are evaluated. Untested levels are not counted as mastery gaps.";
 const BLOOM_LEVEL_ORDER = ["remember", "understand", "apply", "analyze", "evaluate", "create"];
@@ -68,10 +68,10 @@ const BLOOM_LEVEL_LABELS = {
   create: "Create",
 };
 const FACTOR_DISPLAY_LABELS = {
-  "Semantic Score": "Short-answer Quality",
-  "Weak Concepts": BLOOM_FACTOR_LABEL,
-  "Weak Concepts Count": BLOOM_FACTOR_LABEL,
-  "Bloom Mastery Gaps": BLOOM_FACTOR_LABEL,
+  "Semantic Score": "Semantic Score",
+  "Weak Concepts": BLOOM_FACTOR_DISPLAY_LABEL,
+  "Weak Concepts Count": BLOOM_FACTOR_DISPLAY_LABEL,
+  "Bloom Mastery Gaps": BLOOM_FACTOR_DISPLAY_LABEL,
 };
 const DRIVER_DISPLAY_LABELS = {
   Attendance: "Low attendance",
@@ -81,7 +81,7 @@ const DRIVER_DISPLAY_LABELS = {
   "Answer Rate": "Low participation",
   Correctness: "Low correctness",
   "Correctness Rate": "Low correctness",
-  "Semantic Score": "Weak short-answer quality",
+  "Semantic Score": "Low semantic score",
   Engagement: "Low engagement",
   "Engagement Score": "Low engagement",
   Consistency: "Inconsistent activity",
@@ -89,9 +89,9 @@ const DRIVER_DISPLAY_LABELS = {
   "Response Time": "Slow response behavior",
   "Recent Activity": "Recent inactivity",
   "Recent Activity Count": "Recent inactivity",
-  "Weak Concepts": "Weak Bloom mastery",
-  "Weak Concepts Count": "Multiple weak concepts",
-  "Bloom Mastery Gaps": "Weak Bloom mastery",
+  "Weak Concepts": BLOOM_FACTOR_DISPLAY_LABEL,
+  "Weak Concepts Count": BLOOM_FACTOR_DISPLAY_LABEL,
+  "Bloom Mastery Gaps": BLOOM_FACTOR_DISPLAY_LABEL,
 };
 const reportColumns = [
   { key: "class_name", label: "Class", icon: BookOpen },
@@ -774,7 +774,7 @@ function studentRiskDriverCandidates(report) {
 
   addStudentDriverCandidate(candidates, impacts, maxImpact, "Low attendance", attendance === null ? 0 : threshold - attendance);
   addStudentDriverCandidate(candidates, impacts, maxImpact, "Low correctness", correctness === null ? 0 : threshold - correctness);
-  addStudentDriverCandidate(candidates, impacts, maxImpact, "Weak short-answer quality", semanticScore === null ? 0 : threshold - semanticScore);
+  addStudentDriverCandidate(candidates, impacts, maxImpact, "Low semantic score", semanticScore === null ? 0 : threshold - semanticScore);
   addStudentDriverCandidate(candidates, impacts, maxImpact, "Low participation", participation === null ? 0 : threshold - participation);
   addStudentDriverCandidate(candidates, impacts, maxImpact, "Low engagement", engagement === null ? 0 : threshold - engagement);
   addStudentDriverCandidate(candidates, impacts, maxImpact, "Inconsistent activity", consistency === null ? 0 : threshold - consistency);
@@ -786,9 +786,9 @@ function studentRiskDriverCandidates(report) {
       bloomGaps.reduce((total, row) => total + Math.max(0, BLOOM_MASTERY_THRESHOLD - Number(row.mastery_rate || 0)), 0) / bloomGaps.length
         + (bloomGaps.length * 8),
     );
-    addStudentDriverCandidate(candidates, impacts, maxImpact, "Weak Bloom mastery", bloomSeverity);
+    addStudentDriverCandidate(candidates, impacts, maxImpact, BLOOM_FACTOR_DISPLAY_LABEL, bloomSeverity);
   } else if (weakConceptsCount !== null && weakConceptsCount > 0) {
-    addStudentDriverCandidate(candidates, impacts, maxImpact, "Multiple weak concepts", Math.min(weakConceptsCount * 12, 48));
+    addStudentDriverCandidate(candidates, impacts, maxImpact, BLOOM_FACTOR_DISPLAY_LABEL, Math.min(weakConceptsCount * 12, 48));
   }
 
   return candidates.sort((first, second) => second.score - first.score || second.impact - first.impact || first.label.localeCompare(second.label));
@@ -1134,8 +1134,14 @@ function impactWidth(factor, factors) {
   return Math.max(8, Math.round((Number(factor.impact || 0) / max) * 100));
 }
 
+function isNegligibleShapFactor(factor) {
+  if (!isShapFactor(factor)) return false;
+  const value = Math.abs(Number(factor?.shap_value));
+  return Number.isFinite(value) && value < 0.05;
+}
+
 function modelFactors(factors) {
-  return (factors || []).filter((factor) => MODEL_FACTOR_LABELS.has(factor.factor));
+  return (factors || []).filter((factor) => MODEL_FACTOR_LABELS.has(factor.factor) && !isNegligibleShapFactor(factor));
 }
 
 const FEATURE_VALUE_CONFIG = {
@@ -1146,8 +1152,8 @@ const FEATURE_VALUE_CONFIG = {
   Engagement: { keys: ["engagement_score"], format: (value) => percent(value) },
   Consistency: { keys: ["consistency_score"], format: (value) => percent(value) },
   "Recent Activity": { keys: ["recent_activity_count"], format: (value) => `${numberValue(value)} ${Number(value) === 1 ? "activity" : "activities"}` },
-  "Weak Concepts": { keys: ["weak_concepts_count"], format: (value) => `${numberValue(Math.round(Number(value)))} below mastery` },
-  "Bloom Mastery Gaps": { keys: ["weak_concepts_count"], format: (value) => `${numberValue(Math.round(Number(value)))} below mastery` },
+  "Weak Concepts": { keys: ["weak_concepts_count"], format: (value) => `${numberValue(Math.round(Number(value)))} weak Bloom ${Number(value) === 1 ? "level" : "levels"}` },
+  "Bloom Mastery Gaps": { keys: ["weak_concepts_count"], format: (value) => `${numberValue(Math.round(Number(value)))} weak Bloom ${Number(value) === 1 ? "level" : "levels"}` },
   "Response Time": { keys: ["response_time", "average_response_time"], format: (value) => `${Math.round(Number(value))}s` },
 };
 
@@ -1203,6 +1209,12 @@ function measuredFactorValue(prediction, factor) {
 }
 
 function influenceLevel(factor, factors) {
+  if (isShapFactor(factor)) {
+    const value = Math.abs(Number(factor?.shap_value));
+    if (value >= 1) return "High";
+    if (value >= 0.5) return "Medium";
+    return "Low";
+  }
   const max = Math.max(...(factors || []).map((item) => Number(item.impact || 0)), 1);
   const share = Number(factor.impact || 0) / max;
   if (share >= 0.72) return "High";
@@ -1211,7 +1223,36 @@ function influenceLevel(factor, factors) {
 }
 
 function influenceTone(factor) {
+  if (isShapFactor(factor)) {
+    const value = Number(factor?.shap_value);
+    if (Number.isFinite(value)) return value >= 0 ? "red" : "green";
+  }
   return factor.direction === "positive" ? "green" : "red";
+}
+
+function isShapFactor(factor) {
+  return factor?.source === "shap" || factor?.method === "shap" || Number.isFinite(Number(factor?.shap_value));
+}
+
+function shapContributionText(factor) {
+  const value = Number(factor?.shap_value);
+  if (!Number.isFinite(value)) return "—";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
+}
+
+function shapPredictionText(prediction, factor) {
+  const riskLevel = titleCase(prediction?.risk_level || "risk").toLowerCase();
+  const value = Number(factor?.shap_value);
+  if (Number.isFinite(value)) {
+    return value >= 0 ? `pushed the prediction toward ${riskLevel} risk` : "reduced the predicted risk";
+  }
+  if (factor.direction === "positive") return "reduced the predicted risk";
+  return `pushed the prediction toward ${riskLevel} risk`;
+}
+
+function explanationMethodLabel(prediction, factors = []) {
+  if (prediction?.xai?.method === "shap" || factors.some(isShapFactor)) return "SHAP local explanation";
+  return prediction?.explanation?.method || "Feature-importance fallback";
 }
 
 function normalizedRiskProbabilities(prediction) {
@@ -1272,14 +1313,16 @@ function PredictionProbabilityBars({ prediction }) {
 function factorSummaryText(prediction, factor) {
   const measured = measuredFactorValue(prediction, factor);
   if (!measured.available) return null;
+  const suffix = isShapFactor(factor) ? ` ${shapPredictionText(prediction, factor)}` : "";
   if (factor.factor === "Weak Concepts" || factor.factor === "Bloom Mastery Gaps") {
+    if (isShapFactor(factor)) return `${factorDisplayLabel(factor)} = ${measured.text}${suffix}`;
     const levels = weakConceptNamesForPrediction(prediction).slice(0, BLOOM_LEVEL_ORDER.length).map(bloomLevelLabel);
     if (levels.length) {
-      return `weaker performance at the ${listText(levels)} cognitive ${levels.length === 1 ? "level" : "levels"}`;
+      return `weaker performance at the ${listText(levels)} cognitive ${levels.length === 1 ? "level" : "levels"}${suffix}`;
     }
     return null;
   }
-  return `${factorDisplayLabel(factor)} = ${measured.text}`;
+  return `${factorDisplayLabel(factor)} = ${measured.text}${suffix}`;
 }
 
 function listText(items) {
@@ -1304,6 +1347,10 @@ function explainSummaryWithValues(prediction, riskFactors, positiveFactors) {
   const positiveSentence = positiveValues.length
     ? ` Counter-signals include ${listText(positiveValues)}.`
     : "";
+  const hasShap = riskFactors.some(isShapFactor) || positiveFactors.some(isShapFactor) || prediction?.xai?.method === "shap";
+  if (hasShap) {
+    return `${subject} is classified as ${riskLevel} Academic Risk because ${listText(riskValues)}.${positiveSentence}`;
+  }
   return `${subject} is classified as ${riskLevel} Academic Risk because ${listText(riskValues)} strongly influenced the prediction.${positiveSentence}`;
 }
 
@@ -1333,7 +1380,7 @@ function WeakConceptValue({ prediction, measured }) {
         onBlur={() => setOpen(false)}
         onClick={() => setOpen((current) => !current)}
       >
-        {numberValue(count)} of {BLOOM_LEVEL_ORDER.length} Bloom {count === 1 ? "level" : "levels"} below mastery
+        {numberValue(count)} of {BLOOM_LEVEL_ORDER.length} weak Bloom {count === 1 ? "level" : "levels"}
         <Info size={14} className="text-role-primary" />
       </button>
       <span
@@ -1342,7 +1389,7 @@ function WeakConceptValue({ prediction, measured }) {
           open && "translate-y-0 opacity-100",
         )}
       >
-        <span className="block text-xs font-black uppercase tracking-wide text-role-primary">Bloom-Level Mastery Details</span>
+        <span className="block text-xs font-black uppercase tracking-wide text-role-primary">Weak Bloom Level Details</span>
         <span className="mt-2 grid gap-1.5 text-sm font-semibold text-slate-600 dark:text-slate-300">
           {visibleLevels.map((level) => (
             <span key={level}>• {level}</span>
@@ -1370,29 +1417,43 @@ function CompactFactorRows({ factors, prediction, direction, limit = 4 }) {
   const Icon = direction === "positive" ? ArrowUpRight : ArrowDownRight;
   return (
     <div className="overflow-hidden rounded-lg border border-role-border dark:border-slate-800">
-      <div className="hidden grid-cols-[1fr_1fr_auto] gap-3 border-b border-role-border bg-role-hover/70 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:bg-slate-900/60 sm:grid">
+      <div className="hidden grid-cols-[1fr_1fr_auto_auto] gap-3 border-b border-role-border bg-role-hover/70 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:bg-slate-900/60 sm:grid">
         <span>Signal</span>
         <span>Actual Value</span>
+        <span>SHAP Value</span>
         <span>Influence</span>
       </div>
       <div className="divide-y divide-role-border dark:divide-slate-800">
         {rows.map((factor) => {
           const measured = measuredFactorValue(prediction, factor);
+          const shapValue = Number(factor?.shap_value);
+          const shapIsPositive = isShapFactor(factor) && Number.isFinite(shapValue) && shapValue >= 0;
+          const RowIcon = isShapFactor(factor) && Number.isFinite(shapValue) ? (shapIsPositive ? ArrowUpRight : ArrowDownRight) : Icon;
           return (
-            <div key={`${factor.factor}-${factor.direction}`} className="grid gap-2 px-3 py-3 sm:grid-cols-[1fr_1fr_auto] sm:items-center sm:gap-3">
+            <div key={`${factor.factor}-${factor.direction}`} className="grid gap-2 px-3 py-3 sm:grid-cols-[1fr_1fr_auto_auto] sm:items-center sm:gap-3">
               <div className="flex min-w-0 items-center gap-2">
-                <Icon className={cn("shrink-0", factor.direction === "positive" ? "text-emerald-600 dark:text-emerald-200" : "text-red-500 dark:text-red-200")} size={15} />
+                <RowIcon className={cn("shrink-0", influenceTone(factor) === "green" ? "text-emerald-600 dark:text-emerald-200" : "text-red-500 dark:text-red-200")} size={15} />
                 <span className="truncate text-sm font-black text-slate-800 dark:text-slate-100">{factorDisplayLabel(factor)}</span>
               </div>
               <p className={cn("text-sm font-black", measured.available ? "text-slate-950 dark:text-white" : "text-slate-500 dark:text-slate-400")}>
                 <FactorValueCell prediction={prediction} factor={factor} measured={measured} />
               </p>
+              <p className="text-sm font-black text-slate-600 dark:text-slate-300">{shapContributionText(factor)}</p>
               <Badge tone={influenceTone(factor)}>{influenceLevel(factor, rows)} Influence</Badge>
             </div>
           );
         })}
       </div>
     </div>
+  );
+}
+
+function ShapExplanationNote({ show }) {
+  if (!show) return null;
+  return (
+    <p className="mt-4 rounded-lg border border-role-border bg-role-hover/50 px-3 py-2.5 text-xs font-semibold leading-5 text-slate-600 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-300">
+      SHAP explains how each feature contributed to this student's prediction. Positive values push the prediction toward the predicted risk level, while negative values reduce the predicted risk. Larger absolute SHAP values indicate stronger influence.
+    </p>
   );
 }
 
@@ -1469,6 +1530,8 @@ function ExplainPredictionModal({ prediction, onClose }) {
   const riskFactors = modelFactors(explanation.negative_factors?.length ? explanation.negative_factors : explanation.top_factors || []).filter((factor) => factor.direction !== "positive");
   const positiveFactors = modelFactors(explanation.positive_factors || []).filter((factor) => factor.direction === "positive");
   const summary = explainSummaryWithValues(prediction, riskFactors, positiveFactors);
+  const methodLabel = explanationMethodLabel(prediction, [...riskFactors, ...positiveFactors]);
+  const hasShapExplanation = prediction?.xai?.method === "shap" || [...riskFactors, ...positiveFactors].some(isShapFactor);
   const recommendedActions = (prediction.recommended_actions || prediction.recommendations || explanation.recommended_actions || [])
     .map((action) => (typeof action === "string" ? action : action?.title || action?.recommended_action || action?.description))
     .filter(Boolean)
@@ -1498,6 +1561,7 @@ function ExplainPredictionModal({ prediction, onClose }) {
             <div className="mt-4 rounded-lg border border-role-border p-3 dark:border-slate-800">
               <p className="text-xs font-black uppercase tracking-wide text-role-primary">Summary</p>
               <p className="mt-2 text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">{summary}</p>
+              <p className="mt-2 text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Explanation method: {methodLabel}</p>
             </div>
 
             <div className="mt-4">
@@ -1512,9 +1576,11 @@ function ExplainPredictionModal({ prediction, onClose }) {
               </div>
             )}
 
+            <ShapExplanationNote show={hasShapExplanation} />
+
             {recommendedActions.length > 0 && (
               <div className="mt-4 rounded-lg border border-role-border p-3 dark:border-slate-800">
-                <p className="text-xs font-black uppercase tracking-wide text-role-primary">Recommended Intervention</p>
+                {/* <p className="text-xs font-black uppercase tracking-wide text-role-primary">Recommended Intervention</p>
                 <ul className="mt-2 grid gap-1.5 text-sm font-semibold leading-6 text-slate-600 dark:text-slate-300">
                   {recommendedActions.map((action) => (
                     <li key={action} className="flex gap-2">
@@ -1522,7 +1588,7 @@ function ExplainPredictionModal({ prediction, onClose }) {
                       <span>{action}</span>
                     </li>
                   ))}
-                </ul>
+                </ul> */}
               </div>
             )}
 
@@ -1831,13 +1897,12 @@ function detectedStudentDrivers(report) {
 }
 
 function recommendationFromDriver(driver) {
-  if (driver === "Weak Bloom mastery") return "Review assessed Bloom-level weaknesses with targeted practice.";
+  if (driver === BLOOM_FACTOR_DISPLAY_LABEL) return "Review assessed Bloom-level weaknesses with targeted practice.";
   if (driver === "Low participation") return "Increase participation checks and active learning prompts.";
   if (driver === "Low correctness") return "Provide additional practice on recently missed concepts.";
-  if (driver === "Weak short-answer quality") return "Give short-answer feedback focused on explanation quality.";
+  if (driver === "Low semantic score") return "Give short-answer feedback focused on semantic understanding.";
   if (driver === "Low attendance") return "Follow up on attendance and missed learning activities.";
   if (driver === "Low engagement") return "Schedule an engagement check-in and monitor the next activities.";
-  if (driver === "Multiple weak concepts") return "Assign targeted review for weak concept clusters.";
   if (driver === "Recent inactivity") return "Contact the student about recent inactivity.";
   if (driver === "Slow response behavior") return "Review response-time pressure and provide guided practice.";
   if (driver === "Inconsistent activity") return "Set a regular practice cadence and review consistency.";
